@@ -1,73 +1,59 @@
+import api from './api';
 import { CallLog, CallSegment } from '../types/call';
+
+// ฟังก์ชันสำหรับแปลงค่า filter เป็นช่วงวันที่
+const getDatesFromFilter = (filter?: string) => {
+  const now = new Date();
+  let from: string | undefined;
+  let to: string | undefined;
+
+  switch (filter) {
+    case 'today':
+      // ตั้งเวลาเป็นเที่ยงคืนของวันนี้
+      from = new Date(now.setHours(0, 0, 0, 0)).toISOString();
+      break;
+    case 'yesterday':
+      const yesterday = new Date();
+      yesterday.setDate(now.getDate() - 1);
+      // 'from' คือเที่ยงคืนของเมื่อวาน
+      from = new Date(yesterday.setHours(0, 0, 0, 0)).toISOString();
+      // 'to' คือเที่ยงคืนของวันนี้
+      to = new Date(now.setHours(0, 0, 0, 0)).toISOString();
+      break;
+    case 'week':
+      // หาวันแรกของสัปดาห์ (วันอาทิตย์)
+      const firstDayOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+      from = new Date(firstDayOfWeek.setHours(0, 0, 0, 0)).toISOString();
+      break;
+    case 'month':
+      // หาวันแรกของเดือน
+      from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      break;
+    case 'all':
+    default:
+      // ไม่มีการกรองตามวันที่
+      break;
+  }
+  return { from, to };
+};
+
 export const callsService = {
   getCalls: async (userId: string, filter?: string): Promise<CallLog[]> => {
-    // For development/testing
-    return [{
-      call_id: '1',
-      user_id: userId,
-      caller_phone: '+66812345678',
-      caller_name: 'John Smith',
-      call_type: 'incoming',
-      status: 'completed',
-      category: 'work',
-      confidence: 0.95,
-      summary: 'Discussion about project timeline',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }, {
-      call_id: '2',
-      user_id: userId,
-      caller_phone: '+66823456789',
-      caller_name: 'Sarah Johnson',
-      call_type: 'missed',
-      status: 'completed',
-      category: 'uncategorized',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }];
+    // แปลงค่า filter เป็น from, to
+    const { from, to } = getDatesFromFilter(filter);
+    
+    // สร้าง object params สำหรับส่งไปกับ request
+    const params: { userId: string, from?: string, to?: string } = { userId };
+    if (from) params.from = from;
+    if (to) params.to = to;
+
+    // ส่ง request ไปยัง API โดยใช้ params ที่ถูกต้อง
+    const response = await api.get('/calls', { params });
+    return response.data.items;
   },
-  getCallDetails: async (userId: string, callId: string): Promise<CallLog> => {
-    // For development/testing
-    return {
-      call_id: callId,
-      user_id: userId,
-      caller_phone: '+66812345678',
-      caller_name: 'John Smith',
-      call_type: 'incoming',
-      status: 'completed',
-      category: 'work',
-      confidence: 0.95,
-      summary: 'Discussion about project timeline and next steps for the AIS AI Secretary project.',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
+
+  getCallDetails: async (userId: string, callId: string): Promise<CallLog & { segments: CallSegment[] }> => {
+    const response = await api.get(`/calls/${callId}`);
+    return response.data;
   },
-  getCallSegments: async (callId: string): Promise<CallSegment[]> => {
-    // For development/testing
-    return [{
-      segment_id: 1,
-      call_id: callId,
-      start_ms: 0,
-      end_ms: 5000,
-      speaker: 'caller',
-      text: 'สวัสดีครับ ผมโทรมาเรื่องโปรเจคที่เราคุยกันไว้',
-      confidence: 0.92
-    }, {
-      segment_id: 2,
-      call_id: callId,
-      start_ms: 5500,
-      end_ms: 12000,
-      speaker: 'receiver',
-      text: 'สวัสดีค่ะ ใช่ค่ะ เรากำลังรอข้อมูลจากคุณอยู่พอดีเลยค่ะ',
-      confidence: 0.88
-    }, {
-      segment_id: 3,
-      call_id: callId,
-      start_ms: 12500,
-      end_ms: 20000,
-      speaker: 'caller',
-      text: 'ครับ ผมจะส่งข้อมูลให้ภายในวันนี้ครับ',
-      confidence: 0.95
-    }];
-  }
 };

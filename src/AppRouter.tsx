@@ -8,11 +8,12 @@ import { CallDetailPage } from './pages/CallDetailPage';
 import { CallsPage } from './pages/CallsPage';
 import { Layout } from './components/layout/Layout';
 import { useAuth } from './context/AuthContext';
+
 export function AppRouter() {
   const {
     isAuthenticated
   } = useAuth();
-  return <BrowserRouter>
+  return <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" /> : <LoginPage />} />
         <Route path="/" element={isAuthenticated ? <Layout /> : <Navigate to="/login" />}>

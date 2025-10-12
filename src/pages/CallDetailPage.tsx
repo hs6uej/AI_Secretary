@@ -5,19 +5,15 @@ import { callsService } from '../services/callsService';
 import { CallLog, CallSegment } from '../types/call';
 import { ArrowLeftIcon, PhoneIncomingIcon, PhoneOutgoingIcon, PhoneMissedIcon, UserIcon, UserPlusIcon, UserMinusIcon, PlayIcon, PauseIcon, ClockIcon, TagIcon } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+
 export const CallDetailPage: React.FC = () => {
-  const {
-    id
-  } = useParams<{
-    id: string;
-  }>();
-  const {
-    user
-  } = useAuth();
+  const { id } = useParams<{ id: string; }>();
+  const { user } = useAuth();
   const [call, setCall] = useState<CallLog | null>(null);
   const [segments, setSegments] = useState<CallSegment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
+
   useEffect(() => {
     const loadCallDetails = async () => {
       if (!user || !id) return;
@@ -25,8 +21,9 @@ export const CallDetailPage: React.FC = () => {
       try {
         const callData = await callsService.getCallDetails(user.user_id, id);
         setCall(callData);
-        const segmentsData = await callsService.getCallSegments(id);
-        setSegments(segmentsData);
+        if (callData.segments) {
+          setSegments(callData.segments);
+        }
       } catch (error) {
         console.error('Failed to load call details:', error);
       } finally {
@@ -35,23 +32,28 @@ export const CallDetailPage: React.FC = () => {
     };
     loadCallDetails();
   }, [id, user]);
+
   const handlePlayRecording = () => {
     setIsPlaying(!isPlaying);
     // This would actually control audio playback in a real app
   };
+
   const handleAddToWhitelist = () => {
     if (!call) return;
     alert(`Added ${call.caller_phone} to whitelist. (This would update the whitelist in a real app)`);
   };
+
   const handleAddToBlacklist = () => {
     if (!call) return;
     alert(`Added ${call.caller_phone} to blacklist. (This would update the blacklist in a real app)`);
   };
+
   if (isLoading) {
     return <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
       </div>;
   }
+
   if (!call) {
     return <div className="bg-white rounded-lg shadow p-8 text-center">
         <h2 className="text-xl font-semibold mb-4">Call Not Found</h2>
@@ -63,6 +65,7 @@ export const CallDetailPage: React.FC = () => {
         </Link>
       </div>;
   }
+
   const getCallIcon = () => {
     switch (call.call_type) {
       case 'incoming':
@@ -73,10 +76,12 @@ export const CallDetailPage: React.FC = () => {
         return <PhoneMissedIcon size={20} className="text-error" />;
     }
   };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString();
   };
+
   return <div>
       <div className="mb-6">
         <Link to="/calls" className="flex items-center text-primary hover:underline">

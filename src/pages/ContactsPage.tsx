@@ -4,10 +4,10 @@ import { SearchIcon, PlusIcon, MoreVerticalIcon, UserPlusIcon, UserMinusIcon } f
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Contact } from '../types/contact';
+import { contactsService } from '../services/contactsService';
+
 export const ContactsPage: React.FC = () => {
-  const {
-    user
-  } = useAuth();
+  const { user } = useAuth();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -18,47 +18,28 @@ export const ContactsPage: React.FC = () => {
     status: 'WHITE' as 'WHITE' | 'BLACK',
     notes: ''
   });
+
   useEffect(() => {
-    // Mock loading contacts
-    setIsLoading(true);
-    // Simulate API call
-    setTimeout(() => {
-      const mockContacts = [{
-        contact_id: 1,
-        user_id: user?.user_id || '',
-        phone: '+66812345678',
-        name: 'John Smith',
-        status: 'WHITE' as const,
-        notes: 'Family friend',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }, {
-        contact_id: 2,
-        user_id: user?.user_id || '',
-        phone: '+6621111111',
-        name: 'Bangkok Bank',
-        status: 'WHITE' as const,
-        notes: 'My bank',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }, {
-        contact_id: 3,
-        user_id: user?.user_id || '',
-        phone: '+66899999999',
-        name: 'Telemarketer',
-        status: 'BLACK' as const,
-        notes: 'Spam caller',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }];
-      setContacts(mockContacts);
-      setIsLoading(false);
-    }, 1000);
+    const fetchContacts = async () => {
+      if (!user) return;
+      setIsLoading(true);
+      try {
+        const contactsData = await contactsService.getContacts(user.user_id);
+        setContacts(contactsData);
+      } catch (error) {
+        console.error('Failed to load contacts:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchContacts();
   }, [user]);
+
   const filteredContacts = contacts.filter(contact => {
-    const matchesSearch = contact.name && contact.name.toLowerCase().includes(searchTerm.toLowerCase()) || contact.phone.includes(searchTerm);
+    const matchesSearch = (contact.name && contact.name.toLowerCase().includes(searchTerm.toLowerCase())) || contact.phone.includes(searchTerm);
     return matchesSearch;
   });
+
   const handleAddContact = () => {
     if (!newContact.phone) {
       alert('Phone number is required');
@@ -81,11 +62,13 @@ export const ContactsPage: React.FC = () => {
       notes: ''
     });
   };
+
   const handleDeleteContact = (contactId: number) => {
     if (confirm('Are you sure you want to delete this contact?')) {
       setContacts(contacts.filter(c => c.contact_id !== contactId));
     }
   };
+
   const handleToggleStatus = (contactId: number) => {
     setContacts(contacts.map(contact => {
       if (contact.contact_id === contactId) {
@@ -98,6 +81,7 @@ export const ContactsPage: React.FC = () => {
       return contact;
     }));
   };
+
   return <div>
       <h1 className="text-2xl font-semibold mb-6">Contacts</h1>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">

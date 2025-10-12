@@ -1,38 +1,15 @@
+import api from './api';
 import { Contact } from '../types/contact';
+
 export const contactsService = {
   getContacts: async (userId: string): Promise<Contact[]> => {
-    // For development/testing
-    return [{
-      contact_id: 1,
-      user_id: userId,
-      phone: '+66812345678',
-      name: 'John Smith',
-      status: 'WHITE',
-      notes: 'Family friend',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }, {
-      contact_id: 2,
-      user_id: userId,
-      phone: '+6621111111',
-      name: 'Bangkok Bank',
-      status: 'WHITE',
-      notes: 'My bank',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }, {
-      contact_id: 3,
-      user_id: userId,
-      phone: '+66899999999',
-      name: 'Telemarketer',
-      status: 'BLACK',
-      notes: 'Spam caller',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }];
+    const response = await api.get('/contacts');
+    return response.data.items;
   },
+
   addContact: async (userId: string, contact: Omit<Contact, 'contact_id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<Contact> => {
-    // For development/testing
+    // For development/testing - Backend endpoint not available
+    console.warn('addContact is not implemented in the backend');
     return {
       contact_id: Math.floor(Math.random() * 1000),
       user_id: userId,
@@ -41,8 +18,10 @@ export const contactsService = {
       updated_at: new Date().toISOString()
     };
   },
+
   updateContact: async (userId: string, contactId: number, contact: Partial<Contact>): Promise<Contact> => {
-    // For development/testing
+    // For development/testing - Backend endpoint not available
+    console.warn('updateContact is not implemented in the backend');
     return {
       contact_id: contactId,
       user_id: userId,
@@ -54,8 +33,10 @@ export const contactsService = {
       updated_at: new Date().toISOString()
     };
   },
+
   deleteContact: async (userId: string, contactId: number): Promise<void> => {
-    // For development/testing
+    // For development/testing - Backend endpoint not available
+    console.warn('deleteContact is not implemented in the backend');
     return Promise.resolve();
   }
 };
