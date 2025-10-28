@@ -26,7 +26,7 @@ export const Sidebar: React.FC = () => {
   return <div className="h-full flex flex-col">
       <div className="p-6">
         <div className="flex items-center justify-center mb-8">
-          <img src="https://placehold.co/200x60?text=AIS+Logo" alt="AIS Logo" className="h-10" />
+          <img src="https://placehold.co/200x60?text=AI_Secretary" alt="AI_Secretary" className="h-10" />
         </div>
         <nav>
           <ul className="space-y-2">

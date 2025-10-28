@@ -118,7 +118,7 @@ export const LoginPage: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center bg-background-light p-4">
       <div className="w-full max-w-md bg-white rounded-xl shadow-lg p-6 md:p-8">
         <div className="flex flex-col items-center mb-8">
-          <img src="https://placehold.co/200x80?text=AIS+Logo" alt="AIS Logo" className="h-16 mb-6" />
+          <img src="https://placehold.co/200x80?text=AI_Secretary" alt="AI_Secretary" className="h-16 mb-6" />
           <h1 className="text-2xl font-semibold text-center">
              {isRegisterMode ? 'Register New Account' : 'AI Secretary Portal'}
           </h1>
