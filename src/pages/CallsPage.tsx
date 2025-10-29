@@ -7,7 +7,7 @@ import { CallDisplay, CallLog, CallType } from '../types/call'; // Import update
 import { SearchIcon } from 'lucide-react';
 import { Input } from '../components/ui/Input';
 
-// Helper function (same as in DashboardPage)
+// Helper function (ปรับปรุงเรื่อง recording)
 const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
    let displayStatus: CallDisplay['status'] = 'other';
    if (call.processing_status === 'failed') {
@@ -24,6 +24,10 @@ const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
      }
   }
 
+  // *** ตรวจสอบ voice_log ก่อนกำหนดค่า recording ***
+  const hasValidRecordingUrl = !!call.voice_log &&
+                                (call.voice_log.startsWith('http://') || call.voice_log.startsWith('https://'));
+
   return {
     id: call.call_id,
     callerName: call.caller_name || 'Unknown',
@@ -33,7 +37,7 @@ const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
     status: displayStatus,
     category: call.category,
     summary: call.summary || undefined,
-    recording: true // Assumption
+    recording: hasValidRecordingUrl, // อัปเดตตรงนี้
   };
 };
 
@@ -49,6 +53,7 @@ export const CallsPage: React.FC = () => {
       if (!user) return;
       setIsLoading(true);
       try {
+        // ใช้ user.user_id จาก AuthContext
         const response = await callsService.getCalls(user.user_id, timeFilter, { limit: 100 }); // Fetch more initially, or implement pagination
         const displayCalls: CallDisplay[] = response.items.map(mapCallLogToDisplay);
         setAllCalls(displayCalls); // Store all fetched calls
@@ -59,7 +64,7 @@ export const CallsPage: React.FC = () => {
       }
     };
     loadCalls();
-  }, [user, timeFilter]);
+  }, [user, timeFilter]); // Dependency array includes user
 
   // Filter calls based on searchTerm from the stored list
   const filteredCalls = allCalls.filter(call => {
@@ -72,18 +77,30 @@ export const CallsPage: React.FC = () => {
     );
   });
 
+  // --- Handlers for CallItem actions (Keep as examples) ---
   const handleListenRecording = (callId: string) => {
-    alert(`Playing recording for call ${callId}. (Functionality not available in n8n schema)`);
+    // Note: The play button was removed from CallItem in the previous step.
+    // If you want playback functionality here, you'd navigate to CallDetailPage
+    // or implement a modal player. For now, this function might not be directly used
+    // by CallItem, but CallList still accepts it.
+    console.log(`Listen recording action triggered for call ${callId}, navigate to detail page.`);
+    // Example navigation (if using useNavigate hook from react-router-dom):
+    // navigate(`/calls/${callId}`);
   };
   const handleCallback = (callNumber: string) => {
-    alert(`Calling back ${callNumber}. (This would initiate a real call in a production app)`);
+    alert(`Calling back ${callNumber}. (Implement actual call logic)`);
   };
   const handleAddToWhitelist = (callNumber: string) => {
-    alert(`Added ${callNumber} to whitelist. (This would update the whitelist in a real app)`);
+    // TODO: Implement actual API call using contactsService.updateContact
+    alert(`Added ${callNumber} to whitelist. (Implement backend update)`);
+    // Optimistically update UI or refetch data
   };
   const handleAddToBlacklist = (callNumber: string) => {
-    alert(`Added ${callNumber} to blacklist. (This would update the blacklist in a real app)`);
+     // TODO: Implement actual API call using contactsService.updateContact
+    alert(`Added ${callNumber} to blacklist. (Implement backend update)`);
+     // Optimistically update UI or refetch data
   };
+  // -----------------------------------------------------------
 
   return (
     <div>
@@ -115,7 +132,8 @@ export const CallsPage: React.FC = () => {
       <CallsList
         calls={filteredCalls} // Display filtered calls
         isLoading={isLoading}
-        onListenRecording={handleListenRecording}
+        // Pass handlers down to CallsList (which passes them to CallItem if needed)
+        onListenRecording={handleListenRecording} // Although button is removed, prop can still be passed
         onCallback={handleCallback}
         onAddToWhitelist={handleAddToWhitelist}
         onAddToBlacklist={handleAddToBlacklist}
