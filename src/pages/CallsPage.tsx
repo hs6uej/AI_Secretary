@@ -1,13 +1,13 @@
 // src/pages/CallsPage.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react'; // ADDED useCallback
 import { useAuth } from '../context/AuthContext';
 import { callsService } from '../services/callsService';
 import { CallsList } from '../components/dashboard/CallsList';
 import { CallDisplay, CallLog, CallType } from '../types/call'; // Import updated types
-import { SearchIcon } from 'lucide-react';
+import { SearchIcon, AlertTriangleIcon } from 'lucide-react'; // ADDED AlertTriangleIcon
 import { Input } from '../components/ui/Input';
 
-// Helper function (ปรับปรุงเรื่อง recording)
+// MODIFIED (Case 5, 7, 8, 9): อัปเดต Helper function
 const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
    let displayStatus: CallDisplay['status'] = 'other';
    if (call.processing_status === 'failed') {
@@ -24,87 +24,163 @@ const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
      }
   }
 
-  // *** ตรวจสอบ voice_log ก่อนกำหนดค่า recording ***
-  const hasValidRecordingUrl = !!call.voice_log &&
-                                (call.voice_log.startsWith('http://') || call.voice_log.startsWith('https://'));
+  // MODIFIED (Case 7): แก้บั๊กปุ่ม Play หาย
+  // เปลี่ยนจาก call.tts_response เป็น call.voice_log
+  const hasValidRecordingUrl = !!call.voice_log; 
 
   return {
-    id: call.call_id,
-    callerName: call.caller_name || 'Unknown',
+    id: call.call_id, // Use session_id
+    callerName: call.caller_name || 'Unknown Caller',
     callerNumber: call.caller_phone,
-    timestamp: new Date(call.created_at).toLocaleString(),
+    timestamp: call.created_at,
     type: call.call_type,
+    summary: call.summary || null,
     status: displayStatus,
-    category: call.category,
-    summary: call.summary || undefined,
-    recording: hasValidRecordingUrl, // อัปเดตตรงนี้
+    // MODIFIED (Case 7): map 'voice_log' ไปยัง 'recordingUrl'
+    recordingUrl: hasValidRecordingUrl ? call.voice_log : null, 
+    
+    // ADDED (Case 5, 8, 9): Pass additional data
+    contact_status: call.contact_status,
+    confidence: call.confidence,
+    spam_risk_score: call.spam_risk_score,
+    category_description: call.category_description,
   };
 };
 
+// ADDED (Case 7): Audio player instance
+let currentAudio: HTMLAudioElement | null = null;
+
 export const CallsPage: React.FC = () => {
   const { user } = useAuth();
-  const [allCalls, setAllCalls] = useState<CallDisplay[]>([]); // Store all fetched calls
-  const [timeFilter, setTimeFilter] = useState<string>('week');
-  const [isLoading, setIsLoading] = useState(true);
+  const [calls, setCalls] = useState<CallLog[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [timeFilter, setTimeFilter] = useState('week'); // Default filter
 
+  // ADDED (Case 7): State for audio playback
+  const [playingCallId, setPlayingCallId] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+
+  // MODIFIED (Fix Infinite Loop):
+  // 1. useCallback ห้าม depend on 'isLoading'
+  const fetchCalls = useCallback(async (filter: string, reset = false) => {
+    setIsLoading(true);
+    setError(null);
+    setAudioError(null); // Clear audio error on new fetch
+
+    // Stop audio on fetch
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+      setPlayingCallId(null);
+    }
+    
+    try {
+      // 2. MODIFIED: ลบ user.user_id ออกจาก (Fixes the loop)
+      const response = await callsService.getAllCalls(filter, { limit: 50 });
+      setCalls(response.items || []);
+    } catch (err) {
+      console.error('Failed to fetch calls:', err);
+      setError('Failed to load call history.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []); // Empty dependency array is correct
+
+  // 3. MODIFIED: useEffect ต้อง depend on 'user' (เผื่อ login) และ 'timeFilter'
   useEffect(() => {
-    const loadCalls = async () => {
-      if (!user) return;
-      setIsLoading(true);
-      try {
-        // ใช้ user.user_id จาก AuthContext
-        const response = await callsService.getCalls(user.user_id, timeFilter, { limit: 100 }); // Fetch more initially, or implement pagination
-        const displayCalls: CallDisplay[] = response.items.map(mapCallLogToDisplay);
-        setAllCalls(displayCalls); // Store all fetched calls
-      } catch (error) {
-        console.error('Failed to load calls:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadCalls();
-  }, [user, timeFilter]); // Dependency array includes user
-
-  // Filter calls based on searchTerm from the stored list
-  const filteredCalls = allCalls.filter(call => {
-    if (!searchTerm) return true;
-    const lowerSearchTerm = searchTerm.toLowerCase();
-    return (
-      (call.callerName && call.callerName.toLowerCase().includes(lowerSearchTerm)) ||
-      call.callerNumber.includes(searchTerm) || // Check number directly
-      (call.summary && call.summary.toLowerCase().includes(lowerSearchTerm)) // Search summary
+    if (user) { // Only fetch if user is loaded
+      fetchCalls(timeFilter, true);
+    }
+  }, [user, timeFilter, fetchCalls]); // This is now safe
+  
+  // Filter calls based on search term
+  const filteredCalls = calls
+    .map(mapCallLogToDisplay)
+    .filter(call =>
+      call.callerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      call.callerNumber.includes(searchTerm) ||
+      (call.summary && call.summary.toLowerCase().includes(searchTerm.toLowerCase()))
     );
-  });
 
-  // --- Handlers for CallItem actions (Keep as examples) ---
-  const handleListenRecording = (callId: string) => {
-    // Note: The play button was removed from CallItem in the previous step.
-    // If you want playback functionality here, you'd navigate to CallDetailPage
-    // or implement a modal player. For now, this function might not be directly used
-    // by CallItem, but CallList still accepts it.
-    console.log(`Listen recording action triggered for call ${callId}, navigate to detail page.`);
-    // Example navigation (if using useNavigate hook from react-router-dom):
-    // navigate(`/calls/${callId}`);
+  // --- Handlers ---
+
+  // MODIFIED (Case 1, 7): Implement audio playback
+  const handleListenRecording = async (callId: string) => {
+    // Stop currently playing audio if any
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.src = ''; // Release resource
+      currentAudio = null;
+    }
+
+    // If clicking the same call that is playing, stop it
+    if (playingCallId === callId) {
+      setPlayingCallId(null);
+      setAudioError(null);
+      return;
+    }
+
+    // Start playing new audio
+    setPlayingCallId(callId);
+    setAudioError(null);
+
+    try {
+      const audioData = await callsService.getCallAudio(callId);
+      const audioSrc = `data:${audioData.mimeType};base64,${audioData.data}`;
+      
+      currentAudio = new Audio(audioSrc);
+      
+      currentAudio.onended = () => {
+        setPlayingCallId(null);
+        currentAudio = null;
+      };
+      currentAudio.onerror = () => {
+        console.error('Audio playback error');
+        setAudioError(`Failed to play audio for ${callId}.`);
+        setPlayingCallId(null);
+        currentAudio = null;
+      };
+
+      await currentAudio.play();
+
+    } catch (err) {
+      console.error('Failed to play audio:', err);
+      setAudioError('Failed to fetch or play audio.');
+      setPlayingCallId(null);
+    }
   };
+
   const handleCallback = (callNumber: string) => {
-    alert(`Calling back ${callNumber}. (Implement actual call logic)`);
+    console.log(`Calling back ${callNumber}...`);
+    window.location.href = `tel:${callNumber}`;
   };
+
   const handleAddToWhitelist = (callNumber: string) => {
-    // TODO: Implement actual API call using contactsService.updateContact
-    alert(`Added ${callNumber} to whitelist. (Implement backend update)`);
-    // Optimistically update UI or refetch data
+    // TODO: Implement
+    console.log(`Adding ${callNumber} to whitelist...`);
   };
+
   const handleAddToBlacklist = (callNumber: string) => {
-     // TODO: Implement actual API call using contactsService.updateContact
-    alert(`Added ${callNumber} to blacklist. (Implement backend update)`);
-     // Optimistically update UI or refetch data
+    // TODO: Implement
+    console.log(`Adding ${callNumber} to blacklist...`);
   };
-  // -----------------------------------------------------------
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold mb-6">Call Logs</h1>
+    <div className="p-4 md:p-6">
+      <h1 className="text-2xl font-semibold mb-4">Call Logs</h1>
+
+      {/* ADDED (Case 7): Audio Error Display */}
+      {audioError && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative mb-4" role="alert">
+          <AlertTriangleIcon className="inline w-5 h-5 mr-2" />
+          <strong className="font-bold">Audio Error: </strong>
+          <span className="block sm:inline">{audioError}</span>
+        </div>
+      )}
+
+      {/* Filter Bar */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <Input
           placeholder="Search name, number, summary..." // Update placeholder
@@ -132,11 +208,13 @@ export const CallsPage: React.FC = () => {
       <CallsList
         calls={filteredCalls} // Display filtered calls
         isLoading={isLoading}
-        // Pass handlers down to CallsList (which passes them to CallItem if needed)
-        onListenRecording={handleListenRecording} // Although button is removed, prop can still be passed
+        // MODIFIED: Pass new props down to CallItem
+        onListenRecording={handleListenRecording} 
+        playingCallId={playingCallId} // (Case 7)
         onCallback={handleCallback}
         onAddToWhitelist={handleAddToWhitelist}
         onAddToBlacklist={handleAddToBlacklist}
+        // TODO: Add onNextPage when pagination is implemented
       />
     </div>
   );

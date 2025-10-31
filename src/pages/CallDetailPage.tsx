@@ -1,340 +1,498 @@
 // src/pages/CallDetailPage.tsx
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { callsService } from '../services/callsService';
-import { CallLog, CallSegment, CallType } from '../types/call';
-import { ArrowLeftIcon, PhoneIncomingIcon, PhoneOutgoingIcon, PhoneMissedIcon, UserIcon, UserPlusIcon, UserMinusIcon, PlayIcon, PauseIcon, ClockIcon, TagIcon, InfoIcon, BotIcon, MessageSquareIcon, Volume2Icon, VolumeXIcon, RotateCcwIcon } from 'lucide-react';
-import { Button } from '../components/ui/Button';
-import api from '../services/api';
+import { contactsService } from '../services/contactsService';
+import { CallLog, CallSegment, SpeakerRole } from '../types/call';
+import {
+  ArrowLeftIcon, PhoneIcon, PlayIcon, PauseIcon, DownloadIcon, UserIcon, BotIcon,
+  CheckCircleIcon, XCircleIcon, HelpCircleIcon, Edit2Icon, SaveIcon, XIcon,
+  RefreshCwIcon, AlertTriangleIcon
+} from 'lucide-react';
+import { format } from 'date-fns';
 
-// --- Helper Function to format time (seconds to MM:SS) ---
-const formatTime = (timeInSeconds: number | undefined): string => {
-  if (timeInSeconds === undefined || isNaN(timeInSeconds)) {
-    return '00:00';
+let currentAudio: HTMLAudioElement | null = null;
+
+const formatSegmentTime = (isoString: string) => {
+  try {
+    return new Date(isoString).toLocaleTimeString('th-TH', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  } catch {
+    return '';
   }
-  const totalSeconds = Math.floor(timeInSeconds);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
-// -----------------------------------------------------------
 
+const formatMMSS = (sec: number) => {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  const m = Math.floor(sec / 60).toString().padStart(2, '0');
+  const s = Math.floor(sec % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+};
 
 export const CallDetailPage: React.FC = () => {
-  const { id } = useParams<{ id: string; }>();
+  const { callId } = useParams<{ callId: string }>();
   const { user } = useAuth();
   const [call, setCall] = useState<CallLog | null>(null);
   const [segments, setSegments] = useState<CallSegment[]>([]);
-  const [isLoading, setIsLoading] = useState(true); // Loading for call details
-  const [isPlaying, setIsPlaying] = useState(false); // Playback state
-  const [audioDataUri, setAudioDataUri] = useState<string | null>(null); // State to store Base64 Data URI
-  const [isAudioLoading, setIsAudioLoading] = useState(false); // Loading state specifically for audio data
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // --- NEW States for Audio Controls ---
-  const [duration, setDuration] = useState<number | undefined>(undefined);
-  const [currentTime, setCurrentTime] = useState<number>(0);
-  const [isMuted, setIsMuted] = useState(false);
-  // ------------------------------------
+  // Audio state
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
 
-  // Load initial call details (without audio)
+  // Audio Controls (NEW)
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [isSeeking, setIsSeeking] = useState(false);
+
+  // Editing state
+  const [isSaving, setIsSaving] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [newName, setNewName] = useState('');
+
   useEffect(() => {
-    const loadCallDetails = async () => {
-      if (!user || !id) return;
+    if (!callId) {
+      setError('No call ID provided.');
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchCallDetails = async () => {
       setIsLoading(true);
-      setAudioDataUri(null); // Reset audio state when call changes
-      setIsPlaying(false);
-      setCurrentTime(0); // Reset time
-      setDuration(undefined); // Reset duration
+      setError(null);
+      setAudioError(null);
       try {
-        const callData = await callsService.getCallDetails(id);
-        setCall(callData);
-        setSegments(callData.segments || []);
-      } catch (error) {
-        console.error('Failed to load call details:', error);
+        const data = await callsService.getCallDetails(callId);
+        setCall(data);
+        setSegments(data.segments || []);
+        setNewName(data.caller_name || 'Unknown Caller');
+      } catch (err) {
+        console.error('Failed to fetch call details:', err);
+        setError('Failed to load call details.');
       } finally {
         setIsLoading(false);
       }
     };
-    loadCallDetails();
-  }, [id, user]);
 
-  // Function to load Base64 audio data and start playback
-  const loadAndPlayAudio = async () => {
-     if (!id || audioDataUri) {
-         if (audioRef.current) {
-             if (isPlaying) {
-                 audioRef.current.pause();
-             } else {
-                 audioRef.current.play().catch(e => console.error("Audio play failed:", e));
-             }
-         }
-         return;
-     }
+    fetchCallDetails();
 
-     if (!call?.voice_log) {
-        alert("No recording URL available for this call.");
-        return;
-     }
-
-     setIsAudioLoading(true);
-     setAudioDataUri(null);
-     setIsPlaying(false);
-     setCurrentTime(0); // Reset time on new load
-     setDuration(undefined); // Reset duration on new load
-
-     try {
-         console.log(`Fetching audio data via proxy for session: ${id}`);
-         const response = await api.get<{ mimeType: string; data: string }>(`/calls/${id}/audio`);
-         const { mimeType, data } = response.data;
-         const dataUri = `data:${mimeType};base64,${data}`;
-         console.log(`Audio data received, creating Data URI (mime: ${mimeType})`);
-         setAudioDataUri(dataUri);
-
-         setTimeout(() => {
-              if (audioRef.current) {
-                 audioRef.current.src = dataUri;
-                 audioRef.current.load();
-                 // Don't auto-play here, let the user click play again
-                 console.log("Audio ready, press play.");
-             }
-         }, 50);
-
-     } catch (error: any) {
-         console.error('Failed to load audio data:', error);
-         alert(`Failed to load audio: ${error.response?.data?.message || error.message || 'Unknown error'}`);
-         setAudioDataUri(null);
-     } finally {
-         setIsAudioLoading(false);
-     }
-  };
-
-  // Main handler for the Play/Pause button
-  const handlePlayPauseControl = () => {
-      if (!audioDataUri && !isAudioLoading) { // Load if not loaded and not currently loading
-          loadAndPlayAudio();
-      } else if (audioRef.current) { // If loaded, toggle play/pause
-          if (isPlaying) {
-              audioRef.current.pause();
-          } else {
-              audioRef.current.play().catch(e => console.error("Audio play failed:", e));
-          }
+    return () => {
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
       }
-  };
+    };
+  }, [callId]);
 
-  // Event handlers for the <audio> element to sync state
-  const handleAudioPlay = () => setIsPlaying(true);
-  const handleAudioPause = () => setIsPlaying(false);
-  const handleAudioEnded = () => {
+  const handlePlayAudio = async () => {
+    if (!callId) return;
+
+    // Pause if currently playing
+    if (currentAudio && isPlaying) {
+      currentAudio.pause();
       setIsPlaying(false);
-  };
-  const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
+      return;
     }
-  };
-  const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration);
-    }
-  };
 
-  // Handler for seeking using the progress bar
-  const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (audioRef.current) {
-      const newTime = Number(event.target.value);
-      audioRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-    }
-  };
-
-  // Handler for mute toggle
-  const toggleMute = () => {
-      if (audioRef.current) {
-          audioRef.current.muted = !isMuted;
-          setIsMuted(!isMuted);
+    // Resume if paused
+    if (currentAudio && !isPlaying) {
+      try {
+        await currentAudio.play();
+        setIsPlaying(true);
+      } catch (e) {
+        console.error('Resume play failed:', e);
+        currentAudio = null;
+        handlePlayAudio();
       }
-  };
-
-  // Handler for rewind (e.g., back 10 seconds)
-  const handleRewind = (seconds: number = 10) => {
-      if (audioRef.current) {
-          const newTime = Math.max(0, audioRef.current.currentTime - seconds);
-          audioRef.current.currentTime = newTime;
-          setCurrentTime(newTime);
-      }
-  };
-
-
-  // --- Helper functions (getCallIcon, formatDate, add/remove blacklist/whitelist) ---
-  const getCallIcon = (type: CallType | undefined) => {
-    if (!type) return <PhoneIncomingIcon size={20} className="text-gray-500" />;
-    switch (type) {
-      case 'Incoming': return <PhoneIncomingIcon size={20} className="text-success" />;
-      case 'Outgoing': return <PhoneOutgoingIcon size={20} className="text-primary" />;
-      case 'Missed': return <PhoneMissedIcon size={20} className="text-error" />;
-      default: return <PhoneIncomingIcon size={20} className="text-gray-500" />;
+      return;
     }
-   };
-   const formatDate = (dateString: string | null | undefined) => {
-        if (!dateString) return 'N/A';
-        try { const date = new Date(dateString); return date.toLocaleString(); }
-        catch (e) { return dateString; }
-    };
-   const handleAddToWhitelist = () => {
-        if (!call || !user) return;
-        alert(`Added ${call.caller_phone} to whitelist. (Backend update needed)`);
-        setCall(prev => prev ? { ...prev, contact_status: 'WHITELISTED' } : null);
-    };
-   const handleAddToBlacklist = () => {
-        if (!call || !user) return;
-        alert(`Added ${call.caller_phone} to blacklist. (Backend update needed)`);
-        setCall(prev => prev ? { ...prev, contact_status: 'BLACKLISTED' } : null);
-    };
-   // --- End Helper Functions ---
 
+    // Start fresh
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
 
-  // --- Render Loading State ---
+    setIsPlaying(true);
+    setAudioError(null);
+
+    try {
+      const audioData = await callsService.getCallAudio(callId);
+      const audioSrc = `data:${audioData.mimeType};base64,${audioData.data}`;
+      currentAudio = new Audio(audioSrc);
+
+      currentAudio.onloadedmetadata = () => {
+        const d = isFinite(currentAudio!.duration) ? currentAudio!.duration : 0;
+        setDuration(d);
+      };
+      currentAudio.ontimeupdate = () => {
+        if (!isSeeking) setCurrentTime(currentAudio!.currentTime || 0);
+      };
+      currentAudio.onplay = () => setIsPlaying(true);
+      currentAudio.onpause = () => setIsPlaying(false);
+      currentAudio.onended = () => {
+        setIsPlaying(false);
+        setCurrentTime(0);
+        currentAudio = null;
+      };
+      currentAudio.onerror = () => {
+        setAudioError('Failed to play audio.');
+        setIsPlaying(false);
+        currentAudio = null;
+      };
+
+      currentAudio.volume = volume;
+
+      await currentAudio.play();
+    } catch (err) {
+      console.error('Failed to play audio:', err);
+      setAudioError('Failed to fetch or play audio.');
+      setIsPlaying(false);
+      currentAudio = null;
+    }
+  };
+
+  // Seek / Volume handlers
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!currentAudio) return;
+    const newTime = parseFloat(e.target.value);
+    setCurrentTime(newTime);
+    currentAudio.currentTime = newTime;
+  };
+  const handleSeekStart = () => setIsSeeking(true);
+  const handleSeekEnd = () => setIsSeeking(false);
+
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVol = parseFloat(e.target.value);
+    setVolume(newVol);
+    if (currentAudio) currentAudio.volume = newVol;
+  };
+
+  const handleSaveName = async () => {
+    if (!user || !call) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const updatedContact = await contactsService.updateContact(
+        user.user_id,
+        call.caller_phone,
+        { caller_name: newName }
+      );
+      setCall(prev => prev ? { ...prev, caller_name: updatedContact.caller_name } : null);
+      setIsEditingName(false);
+    } catch (err) {
+      console.error('Failed to save name:', err);
+      setError('Failed to save name. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSetStatus = async (status: 'WHITELISTED' | 'BLACKLISTED' | 'UNKNOWN') => {
+    if (!user || !call || call.contact_status === status || isSaving) return;
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      const updatedContact = await contactsService.updateContact(
+        user.user_id,
+        call.caller_phone,
+        { status }
+      );
+      setCall(prev => prev ? { ...prev, contact_status: updatedContact.status } : null);
+    } catch (err) {
+      console.error('Failed to set status:', err);
+      setError('Failed to update status. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const getSpeakerIcon = (speaker: SpeakerRole) => {
+    return speaker === 'ai'
+      ? <BotIcon className="w-5 h-5 text-primary flex-shrink-0" />
+      : <UserIcon className="w-5 h-5 text-gray-600 flex-shrink-0" />;
+  };
+
+  const getContactStatusIcon = (status: 'WHITELISTED' | 'BLACKLISTED') => {
+    return status === 'WHITELISTED'
+      ? <CheckCircleIcon className="w-5 h-5 text-success" />
+      : <XCircleIcon className="w-5 h-5 text-destructive" />;
+  };
+
   if (isLoading) {
-    return <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
-      </div>;
-   }
-  // --- Render Not Found State ---
-  if (!call) {
-     return <div className="bg-white rounded-lg shadow p-8 text-center">
-        <h2 className="text-xl font-semibold mb-4">Call Not Found</h2>
-        <p className="text-gray-500 mb-6"> The call session (ID: {id}) you are looking for does not exist or data is unavailable.</p>
-        <Link to="/calls"><Button>Back to Call Logs</Button></Link>
-      </div>;
-   }
+    return (
+      <div className="p-6 flex justify-center items-center">
+        <RefreshCwIcon className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
-  // Determine if audio can potentially be loaded
-  const canAttemptLoadAudio = !!call.voice_log;
-
-  // --- Render Call Details ---
-  return (
-    <div>
-      {/* Back Link */}
-      <div className="mb-6">
-        <Link to="/calls" className="flex items-center text-primary hover:underline">
-          <ArrowLeftIcon size={16} className="mr-1" /> Back to Call Logs
+  if (error) {
+    return (
+      <div className="p-6 text-center text-destructive">
+        <AlertTriangleIcon className="w-8 h-8 mx-auto mb-2" />
+        <p>{error}</p>
+        <Link to="/calls" className="text-primary hover:underline mt-4 inline-block">
+          Back to Call Logs
         </Link>
       </div>
+    );
+  }
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        {/* Call Header */}
-        <div className="p-6 border-b">
-           <div className="flex items-center mb-2">
-            {getCallIcon(call.call_type)}
-            <h1 className="text-2xl font-semibold ml-2">{call.caller_name || 'Unknown Caller'}</h1>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center text-gray-500 mb-4 flex-wrap gap-x-4 gap-y-1">
-              <span className="flex items-center"><UserIcon size={16} className="mr-1" />{call.caller_phone}</span>
-              <span className="flex items-center"><ClockIcon size={16} className="mr-1" />{formatDate(call.created_at)}</span>
-              {call.category && call.category !== 'uncategorized' && (<span className="flex items-center"><TagIcon size={16} className="mr-1" />{call.category.charAt(0).toUpperCase() + call.category.slice(1).replace(/_/g, ' ')}</span>)}
-              {call.intent && call.intent !== 'unknown' && (<span className="flex items-center"><InfoIcon size={16} className="mr-1" />Intent: {call.intent}</span>)}
-              <span className={`flex items-center text-xs px-2 py-1 rounded-full ${call.contact_status === 'WHITELISTED' ? 'bg-success/10 text-success' : call.contact_status === 'BLACKLISTED' ? 'bg-error/10 text-error' : 'bg-gray-100 text-gray-600'}`}>{call.contact_status || 'Unknown'} Status</span>
-          </div>
+  if (!call) {
+    return <div className="p-6 text-center text-gray-500">Call not found.</div>;
+  }
 
-          {/* --- Audio Player Controls --- */}
-          {canAttemptLoadAudio && (
-            <div className="mt-4 p-3 border rounded-lg bg-gray-50">
-              <div className="flex items-center gap-3">
-                <Button variant="primary" size="sm" className="flex items-center justify-center w-10 h-10 p-0 rounded-full" onClick={handlePlayPauseControl} loading={isAudioLoading} disabled={isAudioLoading} title={isPlaying ? 'Pause' : 'Play'}>
-                    {isAudioLoading ? (<div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white"></div>) : isPlaying ? (<PauseIcon size={20} />) : (<PlayIcon size={20} className="ml-0.5" />)}
-                </Button>
-                 <Button variant="outline" size="sm" className="flex items-center justify-center w-10 h-10 p-0 rounded-full" onClick={() => handleRewind(10)} disabled={isAudioLoading || !audioDataUri} title="Rewind 10s">
-                    <RotateCcwIcon size={18} />
-                 </Button>
-                <div className="text-sm text-gray-600 font-mono">{formatTime(currentTime)} / {formatTime(duration)}</div>
-                <input type="range" min="0" max={duration || 0} value={currentTime} onChange={handleSeek} disabled={isAudioLoading || !audioDataUri} className="flex-grow h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50" />
-                 <Button variant="outline" size="sm" className="flex items-center justify-center w-10 h-10 p-0 rounded-full" onClick={toggleMute} disabled={isAudioLoading || !audioDataUri} title={isMuted ? 'Unmute' : 'Mute'}>
-                    {isMuted ? <VolumeXIcon size={18} /> : <Volume2Icon size={18} />}
-                 </Button>
-              </div>
-              <audio ref={audioRef} onPlay={handleAudioPlay} onPause={handleAudioPause} onEnded={handleAudioEnded} onTimeUpdate={handleTimeUpdate} onLoadedMetadata={handleLoadedMetadata} onError={(e) => { console.error("Audio playback error:", e); setAudioDataUri(null); setIsPlaying(false); setIsAudioLoading(false); setDuration(undefined); setCurrentTime(0); alert("Error playing audio."); }} preload="metadata" className="hidden" />
+  const callTime = format(new Date(call.created_at), 'PP, p');
+  const callDurationLabel = duration > 0 ? formatMMSS(duration) : '01:19';
+
+  return (
+    <div className="p-4 md:p-6">
+      <Link to="/calls" className="flex items-center text-sm text-primary hover:underline mb-4">
+        <ArrowLeftIcon size={16} className="mr-1" />
+        Back to Call Logs
+      </Link>
+
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
+        <div>
+          {!isEditingName ? (
+            <div className="flex items-center group">
+              <h1 className="text-2xl font-semibold mr-2">{call.caller_name || 'Unknown Caller'}</h1>
+              <button
+                onClick={() => {
+                  setNewName(call.caller_name || '');
+                  setIsEditingName(true);
+                }}
+                className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-primary"
+                title="Edit name"
+              >
+                <Edit2Icon size={18} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center">
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="text-2xl font-semibold p-1 border rounded-md"
+                autoFocus
+              />
+              <button
+                onClick={handleSaveName}
+                disabled={isSaving}
+                className="p-1 text-success disabled:text-gray-400 ml-2"
+                title="Save"
+              >
+                {isSaving ? <RefreshCwIcon size={18} className="animate-spin" /> : <SaveIcon size={18} />}
+              </button>
+              <button
+                onClick={() => setIsEditingName(false)}
+                disabled={isSaving}
+                className="p-1 text-destructive disabled:text-gray-400 ml-1"
+                title="Cancel"
+              >
+                <XIcon size={18} />
+              </button>
             </div>
           )}
-          {!canAttemptLoadAudio && (<div className="mt-4 text-sm text-gray-500">No recording available for this call.</div>)}
-          {/* --- End Audio Player Controls --- */}
 
-
-          {/* --- Whitelist/Blacklist Actions --- */}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {call.contact_status !== 'WHITELISTED' && (<Button variant="outline" size="sm" className="flex items-center" onClick={handleAddToWhitelist} disabled={isAudioLoading}><UserPlusIcon size={16} className="mr-1" /> Whitelist Caller</Button>)}
-            {call.contact_status !== 'BLACKLISTED' && (<Button variant="outline" size="sm" className="flex items-center text-error border-error hover:bg-error/10" onClick={handleAddToBlacklist} disabled={isAudioLoading}><UserMinusIcon size={16} className="mr-1" /> Blacklist Caller</Button>)}
+          <div className="text-gray-500">{call.caller_phone}</div>
+          <div className="text-sm text-gray-500 mt-1">
+            {callTime} &bull; {call.call_type} &bull; {call.category_description || 'N/A'}
           </div>
-          {/* --- End Actions --- */}
         </div>
 
-        {/* Call Details Grid - *** ใส่โค้ดแสดงผลจริงตรงนี้ *** */}
-         <div className="p-6 border-b grid grid-cols-1 md:grid-cols-2 gap-4">
-              {call.summary && (
-                  <div>
-                    <h2 className="text-lg font-medium mb-2">Summary (TH)</h2>
-                    <p className="text-gray-700 bg-gray-50 p-3 rounded">{call.summary}</p>
-                 </div>
-             )}
-              {call.sms_summary_en && (
-                 <div>
-                    <h2 className="text-lg font-medium mb-2">Summary (EN)</h2>
-                    <p className="text-gray-700 bg-gray-50 p-3 rounded">{call.sms_summary_en}</p>
-                 </div>
-             )}
-             {call.note && (
-                  <div>
-                    <h2 className="text-lg font-medium mb-2">Internal Note</h2>
-                    <p className="text-gray-700 bg-yellow-50 p-3 rounded">{call.note}</p>
-                 </div>
-             )}
-              {call.call_outcome && (
-                  <div>
-                    <h2 className="text-lg font-medium mb-2">Call Outcome</h2>
-                    <p className="text-gray-700 font-mono text-sm">{call.call_outcome}</p>
-                 </div>
-             )}
-              {call.spam_risk_score !== null && typeof call.spam_risk_score !== 'undefined' && (
-                  <div>
-                    <h2 className="text-lg font-medium mb-2">Spam Risk</h2>
-                     <p className="text-gray-700">Score: {Number(call.spam_risk_score).toFixed(2)}</p>
-                     {call.spam_risk_reason && <p className="text-gray-500 text-sm">Reason: {call.spam_risk_reason}</p>}
-                 </div>
-              )}
-               {call.confidence !== null && typeof call.confidence !== 'undefined' && (
-                  <div>
-                    <h2 className="text-lg font-medium mb-2">Intent Confidence</h2>
-                     <p className="text-gray-700">{Number(call.confidence).toFixed(2)}</p>
-                 </div>
-              )}
-         </div>
+        <div className="flex items-center space-x-2 mt-4 md:mt-0">
+          <button
+            onClick={() => handleSetStatus(call.contact_status === 'WHITELISTED' ? 'UNKNOWN' : 'WHITELISTED')}
+            className={`flex items-center px-3 py-1.5 rounded-full text-sm border ${
+              call.contact_status === 'WHITELISTED'
+                ? 'bg-success-100 border-success text-success-800'
+                : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200'
+            }`}
+            disabled={isSaving}
+          >
+            {getContactStatusIcon('WHITELISTED')}
+            Whitelist
+          </button>
+          <button
+            onClick={() => handleSetStatus(call.contact_status === 'BLACKLISTED' ? 'UNKNOWN' : 'BLACKLISTED')}
+            className={`flex items-center px-3 py-1.5 rounded-full text-sm border ${
+              call.contact_status === 'BLACKLISTED'
+                ? 'bg-destructive-100 border-destructive text-destructive-800'
+                : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200'
+            }`}
+            disabled={isSaving}
+          >
+            {getContactStatusIcon('BLACKLISTED')}
+            Blacklist
+          </button>
+        </div>
+      </div>
 
+      {/* Audio Player */}
+      <div className="bg-gray-50 p-4 rounded-lg flex flex-col md:flex-row md:items-center md:justify-between mb-6 border">
+        <div className="flex items-center w-full md:w-auto">
+          <button
+            onClick={handlePlayAudio}
+            disabled={!call.voice_log}
+            className="p-2 rounded-full bg-primary text-white hover:bg-primary-700 disabled:bg-gray-300"
+            title={isPlaying ? 'Pause' : 'Play'}
+          >
+            {isPlaying ? <PauseIcon size={20} /> : <PlayIcon size={20} />}
+          </button>
 
-        {/* Call Transcript (from chat history) */}
-        <div className="p-6">
-            <h2 className="text-lg font-medium mb-4">Conversation Log</h2>
-             {segments.length === 0 ? (
-                <p className="text-gray-500">No conversation log available for this session.</p>
-             ) : (
-                <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
-                 {segments.map(segment => (
-                    <div key={segment.segment_id} className={`flex items-start gap-2 ${segment.speaker === 'human' ? '' : 'justify-end'}`}>
-                       {segment.speaker === 'human' && (<span className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mt-1" title="Caller"><UserIcon size={16} className="text-blue-600"/></span>)}
-                       <div className={`p-3 rounded-lg max-w-[80%] ${segment.speaker === 'human' ? 'bg-blue-50 text-blue-900' : 'bg-primary/10 text-primary-dark'}`}>
-                            {typeof segment.text === 'string' && segment.text.startsWith('{') && segment.text.endsWith('}') ? (
-                               (() => {
-                                   try { const parsed = JSON.parse(segment.text); return <pre className="text-xs whitespace-pre-wrap font-sans">{parsed.response || JSON.stringify(parsed, null, 2)}</pre>; }
-                                   catch (e) { return <div className="text-gray-800 whitespace-pre-wrap">{segment.text}</div>; }
-                               })()
-                            ) : (<div className="text-gray-800 whitespace-pre-wrap">{segment.text || '(No content)'}</div>)}
-                        </div>
-                         {segment.speaker === 'ai' && (<span className="flex-shrink-0 w-8 h-8 rounded-full bg-green-100 flex items-center justify-center mt-1" title="AI Secretary"><BotIcon size={16} className="text-green-600"/></span>)}
+          {/* Controls & States */}
+          <div className="flex flex-col w-full md:w-[420px] ml-4">
+            {/* Seek */}
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step="0.01"
+              value={Math.min(currentTime, duration || 0)}
+              onMouseDown={handleSeekStart}
+              onTouchStart={handleSeekStart}
+              onChange={handleSeek}
+              onMouseUp={handleSeekEnd}
+              onTouchEnd={handleSeekEnd}
+              className="w-full accent-primary"
+              disabled={!call.voice_log}
+            />
+            <div className="flex justify-between text-xs text-gray-600 mt-1">
+              <span>{formatMMSS(currentTime)}</span>
+              <span>{formatMMSS(duration)}</span>
+            </div>
+
+            {/* Volume */}
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-gray-500">Volume</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={volume}
+                onChange={handleVolumeChange}
+                className="w-28 accent-primary"
+                disabled={!call.voice_log}
+              />
+            </div>
+          </div>
+        </div>
+
+        {audioError && <span className="text-destructive text-sm mt-3 md:mt-0">{audioError}</span>}
+
+        <a
+          href={call.voice_log || '#'}
+          download={`call_${callId}.wav`}
+          className={`flex items-center text-sm text-primary hover:underline mt-3 md:mt-0 ${!call.voice_log ? 'opacity-50 cursor-not-allowed' : ''}`}
+          onClick={(e) => !call.voice_log && e.preventDefault()}
+          title="Download audio"
+        >
+          <DownloadIcon size={16} className="mr-1" />
+          Download
+        </a>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div className="bg-white p-4 rounded-lg border">
+          <h3 className="font-semibold mb-2">Summary (TH)</h3>
+          <p className="text-sm text-gray-700">{call.summary || 'N/A'}</p>
+        </div>
+        <div className="bg-white p-4 rounded-lg border">
+          <h3 className="font-semibold mb-2">Call Outcome</h3>
+          <p className="text-sm text-gray-700 capitalize">{call.call_outcome || 'N/A'}</p>
+        </div>
+        <div className="bg-white p-4 rounded-lg border">
+          <h3 className="font-semibold mb-2">Intent & Confidence</h3>
+          <p className="text-sm text-gray-700 capitalize">{call.intent || 'N/A'}</p>
+          <p className="text-sm text-gray-700">Score: {Number(call.confidence || 0).toFixed(2)}</p>
+        </div>
+        <div className="bg-white p-4 rounded-lg border">
+          <h3 className="font-semibold mb-2">Spam Risk</h3>
+          <p className="text-sm text-gray-700">Score: {Number(call.spam_risk_score || 0).toFixed(2)}</p>
+          <p className="text-sm text-gray-700">{call.spam_risk_reason || 'No reason provided'}</p>
+        </div>
+        <div className="bg-white p-4 rounded-lg border">
+          <h3 className="font-semibold mb-2">Summary (EN)</h3>
+          <p className="text-sm text-gray-700">{call.sms_summary_en || 'N/A'}</p>
+        </div>
+      </div>
+
+      <div className="p-6">
+        <h2 className="text-lg font-medium mb-4">Conversation Log</h2>
+        {segments.length === 0 ? (
+          <p className="text-gray-500">No conversation log available for this session.</p>
+        ) : (
+          <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+            {segments.map(segment => (
+              <div
+                key={segment.segment_id}
+                className={`flex items-start gap-2 ${segment.speaker === 'human' ? '' : 'justify-end'}`}
+              >
+                {segment.speaker === 'human' && (
+                  <span
+                    className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mt-1"
+                    title="Caller"
+                  >
+                    <UserIcon size={16} className="text-blue-600" />
+                  </span>
+                )}
+                <div
+                  className={`p-3 rounded-lg max-w-[80%] ${
+                    segment.speaker === 'human'
+                      ? 'bg-blue-50 text-blue-900'
+                      : 'bg-primary/10 text-primary-dark'
+                  }`}
+                >
+                  {typeof segment.text === 'string' &&
+                  segment.text.startsWith('{') &&
+                  segment.text.endsWith('}') ? (
+                    (() => {
+                      try {
+                        const parsed = JSON.parse(segment.text);
+                        return (
+                          <pre className="text-xs whitespace-pre-wrap font-sans">
+                            {parsed.response || JSON.stringify(parsed, null, 2)}
+                          </pre>
+                        );
+                      } catch {
+                        return (
+                          <div className="text-gray-800 whitespace-pre-wrap">
+                            {segment.text}
+                          </div>
+                        );
+                      }
+                    })()
+                  ) : (
+                    <div className="text-gray-800 whitespace-pre-wrap">
+                      {segment.text || '(No content)'}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-        </div>
+                {segment.speaker === 'ai' && (
+                  <span
+                    className="flex-shrink-0 w-8 h-8 rounded-full bg-green-100 flex items-center justify-center mt-1"
+                    title="AI Secretary"
+                  >
+                    <BotIcon size={16} className="text-green-600" />
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

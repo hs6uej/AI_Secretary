@@ -1,53 +1,89 @@
+// src/components/dashboard/StatusCard.tsx
 import React from 'react';
-import { UserState } from '../../types/user';
+import { Link } from 'react-router-dom';
+
 interface StatusCardProps {
-  status: UserState['status'];
-  message?: string;
-  duration?: string;
+  title: string;
+  value: string;
+  description: string;
+  icon: React.ReactElement; // Accept React element (like <UserCheckIcon />)
+  linkTo?: string;
+  // MODIFIED: Added status prop for conditional styling
+  status?: 'active' | 'inactive' | 'dnd' | 'warning';
 }
+
 export const StatusCard: React.FC<StatusCardProps> = ({
-  status,
-  message,
-  duration
+  title,
+  value,
+  description,
+  icon,
+  linkTo,
+  status = 'active' // Default to 'active'
 }) => {
-  const statusConfig = {
-    available: {
-      label: 'Available',
-      color: 'bg-success/10 border-success/20',
-      textColor: 'text-success',
-      icon: <div className="w-3 h-3 bg-success rounded-full animate-pulse"></div>
-    },
-    busy: {
-      label: 'Busy',
-      color: 'bg-warning/10 border-warning/20',
-      textColor: 'text-warning',
-      icon: <div className="w-3 h-3 bg-warning rounded-full"></div>
-    },
-    dnd: {
-      label: 'Do Not Disturb',
-      color: 'bg-error/10 border-error/20',
-      textColor: 'text-error',
-      icon: <div className="w-3 h-3 bg-error rounded-full"></div>
-    },
-    away: {
-      label: 'Away',
-      color: 'bg-secondary/10 border-secondary/20',
-      textColor: 'text-secondary',
-      icon: <div className="w-3 h-3 bg-secondary rounded-full"></div>
-    }
-  };
-  const {
-    label,
-    color,
-    textColor,
-    icon
-  } = statusConfig[status];
-  return <div className={`p-6 rounded-lg border ${color}`}>
-      <div className="flex items-center mb-3">
-        <div className="mr-2">{icon}</div>
-        <h3 className={`font-medium ${textColor}`}>{label}</h3>
+
+  // MODIFIED: Logic to determine colors based on status
+  let bgColor = 'bg-primary-100'; // Default
+  let textColor = 'text-primary';
+  let valueColor = 'text-gray-900';
+  let descColor = 'text-gray-600';
+
+  switch (status) {
+    case 'active':
+      bgColor = 'bg-success-100';
+      textColor = 'text-success-700';
+      valueColor = 'text-success-800';
+      descColor = 'text-success-700';
+      break;
+    case 'inactive':
+      bgColor = 'bg-gray-100';
+      textColor = 'text-gray-600';
+      valueColor = 'text-gray-900';
+      descColor = 'text-gray-700';
+      break;
+    case 'dnd':
+      bgColor = 'bg-destructive-100';
+      textColor = 'text-destructive-700';
+      valueColor = 'text-destructive-800';
+      descColor = 'text-destructive-700';
+      break;
+    case 'warning':
+      bgColor = 'bg-yellow-100';
+      textColor = 'text-yellow-700';
+      valueColor = 'text-yellow-800';
+      descColor = 'text-yellow-700';
+      break;
+    default:
+      // Use default colors
+      break;
+  }
+  
+  // Truncate long descriptions (like announcements)
+  const displayDescription = description.length > 50 
+    ? `${description.substring(0, 50)}...` 
+    : description;
+
+  const cardContent = (
+    <div className={`p-4 rounded-lg shadow-sm border ${bgColor} ${textColor}`}>
+      <div className="flex justify-between items-start">
+        <h3 className="text-sm font-medium uppercase tracking-wide">{title}</h3>
+        {React.cloneElement(icon, { className: `w-5 h-5 ${textColor}` })}
       </div>
-      {message && <p className="text-gray-700 mb-2">{message}</p>}
-      {duration && <p className="text-sm text-gray-500">Duration: {duration}</p>}
-    </div>;
+      <div className="mt-2">
+        <div className={`text-2xl font-semibold ${valueColor}`}>{value}</div>
+        <p className={`text-xs ${descColor} mt-1 h-8`}> {/* Fixed height for alignment */}
+          {displayDescription}
+        </p>
+      </div>
+    </div>
+  );
+
+  if (linkTo) {
+    return (
+      <Link to={linkTo} className="hover:opacity-80 transition-opacity">
+        {cardContent}
+      </Link>
+    );
+  }
+
+  return cardContent;
 };

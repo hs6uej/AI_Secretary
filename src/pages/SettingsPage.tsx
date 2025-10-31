@@ -1,186 +1,249 @@
-import React, { useState } from 'react';
+// src/pages/SettingsPage.tsx
+import React, { useState, useEffect } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { useAuth } from '../context/AuthContext';
-import { UserIcon, BellIcon, PhoneIcon, MessageSquareIcon, ShieldIcon, LogOutIcon } from 'lucide-react';
+import { 
+  UserIcon, BellIcon, ShieldIcon, LogOutIcon, 
+  SaveIcon, RefreshCwIcon, AlertTriangleIcon 
+} from 'lucide-react';
+// ADDED (Case 12, 15): Import type for saving
+import { UpdateSettingsData } from '../services/settingsService';
+
 export const SettingsPage: React.FC = () => {
   const {
     user,
     logout,
     userSettings,
-    updateUserSettings
+    updateUserSettings, // This is the new function from context
   } = useAuth();
+  
   const [activeTab, setActiveTab] = useState<'profile' | 'secretary' | 'security'>('profile');
-  // Initialize with safe default values
-  const [profileForm, setProfileForm] = useState({
-    name: user?.owner_name || '',
-    email: '',
-    phoneNumber: user?.owner_number || ''
-  });
-  const [secretaryForm, setSecretaryForm] = useState({
-    voicemailEnabled: userSettings?.voicemailEnabled || false,
-    announcementEnabled: userSettings?.announcementEnabled || false,
-    announcementMessage: userSettings?.announcementMessage || '',
-    callForwarding: userSettings?.callForwarding || false,
-    forwardingNumber: userSettings?.forwardingNumber || ''
-  });
-  const handleProfileSave = () => {
-    // In a real app, this would update the user profile via an API call
-    alert('Profile updated! (This would save to the server in a real app)');
-  };
-  const handleSecretarySave = () => {
-    if (updateUserSettings) {
-      updateUserSettings({
-        voicemailEnabled: secretaryForm.voicemailEnabled,
-        announcementEnabled: secretaryForm.announcementEnabled,
-        announcementMessage: secretaryForm.announcementMessage,
-        callForwarding: secretaryForm.callForwarding,
-        forwardingNumber: secretaryForm.forwardingNumber
-      });
-      alert('Secretary settings updated!');
+  
+  // --- Form States (Combined for simplicity) ---
+  const [name, setName] = useState('');
+  const [spelling, setSpelling] = useState(''); // (Case 15)
+  const [announcement, setAnnouncement] = useState(''); // (Case 12)
+  // TODO: Add DND/Forwarding states here
+  
+  // --- General States ---
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  // Load initial data from context
+  useEffect(() => {
+    if (user) {
+      setName(user.owner_name || '');
+      setSpelling(user.owner_name_spelling || ''); // (Case 15)
+    }
+    if (userSettings) {
+      setAnnouncement(userSettings.announcement || ''); // (Case 12)
+      // TODO: Set DND/Forwarding states here
+    }
+  }, [user, userSettings]);
+
+  // MODIFIED (Case 12, 15): Combined Save Handler
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    const updateData: UpdateSettingsData = {
+      owner_name: name,
+      owner_name_spelling: spelling, // (Case 15)
+      announcement: announcement, // (Case 12)
+      // TODO: Add DND/Forwarding fields
+    };
+
+    try {
+      await updateUserSettings(updateData);
+      setSuccess('Settings saved successfully!');
+    } catch (err) {
+      console.error('Failed to save settings:', err);
+      setError('Failed to save settings. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
-  const handleChangePassword = () => {
-    // In a real app, this would initiate a password change flow
-    alert('Password change functionality would be implemented here in a real app');
+  
+  // ADDED (Case 12): Handler to clear announcement
+  const handleCancelAnnouncement = async () => {
+    setIsLoading(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      // Call update with only the announcement field set to null
+      await updateUserSettings({ announcement: null });
+      setAnnouncement(''); // Clear local input
+      setSuccess('Announcement cancelled successfully!');
+    } catch (err) {
+      setError('Failed to cancel announcement.');
+    } finally {
+      setIsLoading(false);
+    }
   };
-  return <div>
+
+  const handleChangePassword = () => {
+    alert('Change password functionality not implemented yet.');
+  };
+
+  return (
+    <div className="p-4 md:p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-semibold mb-6">Settings</h1>
-      {/* Tabs */}
-      <div className="flex border-b mb-6">
-        <button className={`py-2 px-4 font-medium ${activeTab === 'profile' ? 'border-b-2 border-primary text-primary' : 'text-gray-500'}`} onClick={() => setActiveTab('profile')}>
-          <span className="flex items-center">
-            <UserIcon size={18} className="mr-2" />
-            Profile
-          </span>
+
+      {/* --- Error/Success Alerts --- */}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative mb-4" role="alert">
+          <AlertTriangleIcon className="inline w-5 h-5 mr-2" />
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-md relative mb-4" role="alert">
+          {success}
+        </div>
+      )}
+      
+      {/* --- Tabs --- */}
+      <div className="mb-6 flex border-b">
+        <button className={`flex items-center px-4 py-3 ${activeTab === 'profile' ? 'border-b-2 border-primary text-primary' : 'text-gray-500'}`} onClick={() => setActiveTab('profile')}>
+          <UserIcon size={18} className="mr-2" />
+          Profile
         </button>
-        <button className={`py-2 px-4 font-medium ${activeTab === 'secretary' ? 'border-b-2 border-primary text-primary' : 'text-gray-500'}`} onClick={() => setActiveTab('secretary')}>
-          <span className="flex items-center">
-            <PhoneIcon size={18} className="mr-2" />
-            AI Secretary
-          </span>
+        <button className={`flex items-center px-4 py-3 ${activeTab === 'secretary' ? 'border-b-2 border-primary text-primary' : 'text-gray-500'}`} onClick={() => setActiveTab('secretary')}>
+          <BellIcon size={18} className="mr-2" />
+          AI Secretary
         </button>
-        <button className={`py-2 px-4 font-medium ${activeTab === 'security' ? 'border-b-2 border-primary text-primary' : 'text-gray-500'}`} onClick={() => setActiveTab('security')}>
-          <span className="flex items-center">
-            <ShieldIcon size={18} className="mr-2" />
-            Security
-          </span>
+        <button className={`flex items-center px-4 py-3 ${activeTab === 'security' ? 'border-b-2 border-primary text-primary' : 'text-gray-500'}`} onClick={() => setActiveTab('security')}>
+          <ShieldIcon size={18} className="mr-2" />
+          Security
         </button>
       </div>
-      {/* Profile Settings */}
-      {activeTab === 'profile' && <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-medium mb-6">Profile Settings</h2>
-          <div className="flex flex-col md:flex-row items-start mb-6">
-            <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center mb-4 md:mb-0 md:mr-6">
-              {user?.avatar ? <img src={user.avatar} alt="Profile" className="w-full h-full rounded-full object-cover" /> : <UserIcon size={36} className="text-gray-500" />}
-            </div>
-            <div className="flex-1">
-              <Button size="sm" className="mb-2">
-                Upload Photo
-              </Button>
-              <p className="text-sm text-gray-500">JPG or PNG. Max size 2MB.</p>
+
+      <form onSubmit={handleSave}>
+        {/* Profile Settings */}
+        {activeTab === 'profile' && (
+          <div className="bg-white rounded-lg shadow-sm p-6 border">
+            <h2 className="text-lg font-medium mb-6">Profile Settings</h2>
+            <div className="space-y-4">
+              <Input
+                label="Name (e.g. ,นภพล)"
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                fullWidth
+              />
+              {/* ADDED (Case 15): Spelling Field */}
+              <Input
+                label="Spelling (คำอ่าน)"
+                id="spelling"
+                placeholder="e.g., นะ-พะ-พน"
+                value={spelling}
+                onChange={(e) => setSpelling(e.target.value)}
+                fullWidth
+              />
+              <Input
+                label="Phone Number"
+                id="phone"
+                value={user?.owner_number || ''}
+                disabled
+                fullWidth
+                className="bg-gray-100"
+              />
+              <Input
+                label="Email (Optional)"
+                id="email"
+                type="email"
+                placeholder="p.golf@example.com"
+                disabled // Assuming email isn't editable for now
+                fullWidth
+                className="bg-gray-100"
+              />
             </div>
           </div>
-          <div className="space-y-4">
-            <Input label="Name" value={profileForm.name} onChange={e => setProfileForm({
-          ...profileForm,
-          name: e.target.value
-        })} fullWidth />
-            <Input label="Email" type="email" value={profileForm.email} onChange={e => setProfileForm({
-          ...profileForm,
-          email: e.target.value
-        })} fullWidth />
-            <Input label="Phone Number" value={profileForm.phoneNumber} disabled helpText="Phone number cannot be changed" fullWidth />
-            <div className="pt-4">
-              <Button onClick={handleProfileSave}>Save Changes</Button>
-            </div>
-          </div>
-        </div>}
-      {/* AI Secretary Settings */}
-      {activeTab === 'secretary' && <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-medium mb-6">AI Secretary Settings</h2>
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-md font-medium mb-2 flex items-center">
-                <BellIcon size={18} className="mr-2 text-primary" />
-                Notifications & Voicemail
-              </h3>
-              <div className="pl-7 space-y-4">
-                <label className="flex items-center">
-                  <input type="checkbox" checked={secretaryForm.voicemailEnabled} onChange={e => setSecretaryForm({
-                ...secretaryForm,
-                voicemailEnabled: e.target.checked
-              })} className="mr-2 h-4 w-4" />
-                  <span>Enable voicemail for missed calls</span>
+        )}
+
+        {/* AI Secretary Settings */}
+        {activeTab === 'secretary' && (
+          <div className="bg-white rounded-lg shadow-sm p-6 border">
+            <h2 className="text-lg font-medium mb-6">AI Secretary Settings</h2>
+            <div className="space-y-6">
+              {/* MODIFIED (Case 12): Announcement Field */}
+              <div>
+                <label htmlFor="announcement" className="block text-sm font-medium text-gray-700 mb-1">
+                  Active Announcement
                 </label>
+                <textarea
+                  id="announcement"
+                  rows={3}
+                  className="w-full p-2 border rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="e.g., ไปต่างประเทศ กลับวันที่ 15 มกร..."
+                  value={announcement}
+                  onChange={(e) => setAnnouncement(e.target.value)}
+                />
+                {/* ADDED (Case 12): Cancel Button */}
+                {announcement && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 text-destructive border-destructive hover:bg-destructive-50"
+                    onClick={handleCancelAnnouncement}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? 'Cancelling...' : 'Cancel Announcement'}
+                  </Button>
+                )}
+              </div>
+              
+              {/* TODO: Add DND / Call Forwarding controls here */}
+              
+            </div>
+          </div>
+        )}
+
+        {/* Security Settings */}
+        {activeTab === 'security' && (
+          <div className="bg-white rounded-lg shadow-sm p-6 border">
+            <h2 className="text-lg font-medium mb-6">Security Settings</h2>
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-md font-medium mb-4">Password</h3>
+                <Button type="button" onClick={handleChangePassword}>Change Password</Button>
+              </div>
+              <div className="border-t pt-6">
+                <h3 className="text-md font-medium mb-4 text-destructive">
+                  Danger Zone
+                </h3>
+                <Button type="button" variant="outline" className="border-destructive text-destructive hover:bg-destructive-50" onClick={logout}>
+                  <LogOutIcon size={18} className="mr-2" />
+                  Log Out
+                </Button>
               </div>
             </div>
-            <div>
-              <h3 className="text-md font-medium mb-2 flex items-center">
-                <MessageSquareIcon size={18} className="mr-2 text-primary" />
-                Announcements
-              </h3>
-              <div className="pl-7 space-y-4">
-                <label className="flex items-center">
-                  <input type="checkbox" checked={secretaryForm.announcementEnabled} onChange={e => setSecretaryForm({
-                ...secretaryForm,
-                announcementEnabled: e.target.checked
-              })} className="mr-2 h-4 w-4" />
-                  <span>Play announcement for callers</span>
-                </label>
-                {secretaryForm.announcementEnabled && <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Announcement Message
-                    </label>
-                    <textarea className="w-full rounded-lg border border-gray-300 p-3" rows={3} value={secretaryForm.announcementMessage} onChange={e => setSecretaryForm({
-                ...secretaryForm,
-                announcementMessage: e.target.value
-              })} placeholder="Enter your announcement message here..." />
-                  </div>}
-              </div>
-            </div>
-            <div>
-              <h3 className="text-md font-medium mb-2 flex items-center">
-                <PhoneIcon size={18} className="mr-2 text-primary" />
-                Call Forwarding
-              </h3>
-              <div className="pl-7 space-y-4">
-                <label className="flex items-center">
-                  <input type="checkbox" checked={secretaryForm.callForwarding} onChange={e => setSecretaryForm({
-                ...secretaryForm,
-                callForwarding: e.target.checked
-              })} className="mr-2 h-4 w-4" />
-                  <span>Enable call forwarding</span>
-                </label>
-                {secretaryForm.callForwarding && <Input label="Forward calls to" value={secretaryForm.forwardingNumber} onChange={e => setSecretaryForm({
-              ...secretaryForm,
-              forwardingNumber: e.target.value
-            })} placeholder="Enter phone number" />}
-              </div>
-            </div>
-            <div className="pt-4">
-              <Button onClick={handleSecretarySave}>Save Settings</Button>
-            </div>
           </div>
-        </div>}
-      {/* Security Settings */}
-      {activeTab === 'security' && <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-medium mb-6">Security Settings</h2>
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-md font-medium mb-4">Password</h3>
-              <Button onClick={handleChangePassword}>Change Password</Button>
-            </div>
-            <div className="border-t pt-6">
-              <h3 className="text-md font-medium mb-4 text-error">
-                Danger Zone
-              </h3>
-              <Button variant="outline" className="border-error text-error hover:bg-error/10" onClick={logout}>
-                <LogOutIcon size={18} className="mr-2" />
-                Log Out
-              </Button>
-            </div>
+        )}
+        
+        {/* Save Button (Only show if not on Security tab) */}
+        {activeTab !== 'security' && (
+          <div className="mt-6">
+            <Button 
+              type="submit" 
+              className="w-full md:w-auto"
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <RefreshCwIcon className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <SaveIcon className="w-4 h-4 mr-2" />
+              )}
+              Save Changes
+            </Button>
           </div>
-        </div>}
-    </div>;
+        )}
+      </form>
+    </div>
+  );
 };

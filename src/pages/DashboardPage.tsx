@@ -1,19 +1,23 @@
 // src/pages/DashboardPage.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { StatusCard } from '../components/dashboard/StatusCard';
-import { QuickActionsBar } from '../components/dashboard/QuickActionsBar';
 import { CallsList } from '../components/dashboard/CallsList';
 import { useAuth } from '../context/AuthContext';
 import { callsService } from '../services/callsService';
-import { CallDisplay, CallLog, CallType } from '../types/call'; // Import updated types
-import { BellOffIcon, MessageSquarePlusIcon, PhoneForwardedIcon } from 'lucide-react';
+import { CallDisplay, CallLog, AudioData } from '../types/call';
+import { 
+  BellOffIcon, MessageSquarePlusIcon, PhoneForwardedIcon,
+  UserCheckIcon, PhoneMissedIcon, AlertTriangleIcon, RefreshCwIcon 
+} from 'lucide-react';
 
-// Helper function (ปรับปรุงเรื่อง recording)
+// (Case 11) Audio player instance
+let currentAudio: HTMLAudioElement | null = null;
+
+// (Case 11 / Case 9, 8, 5) Helper function to map data for CallItem
 const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
-  let displayStatus: CallDisplay['status'] = 'other';
-
-  // Mapping logic based on calltype and processing_status from n8n_call_history
-  if (call.processing_status === 'failed') {
+   let displayStatus: CallDisplay['status'] = 'other';
+   if (call.processing_status === 'failed') {
     displayStatus = 'failed';
   } else if (call.processing_status === 'processing' || call.processing_status === 'in_progress') {
     displayStatus = 'processing';
@@ -26,251 +30,244 @@ const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
        displayStatus = 'blocked';
      }
   }
-
-  // *** ตรวจสอบ voice_log ก่อนกำหนดค่า recording ***
-  const hasValidRecordingUrl = !!call.voice_log &&
-                                (call.voice_log.startsWith('http://') || call.voice_log.startsWith('https://'));
+  const hasValidRecordingUrl = !!call.voice_log;
 
   return {
-    id: call.call_id, // Use session_id which is mapped to call_id in backend response
-    callerName: call.caller_name || 'Unknown',
-    callerNumber: call.caller_phone, // mapped from caller_number
-    timestamp: new Date(call.created_at).toLocaleString(), // mapped from datetime
-    type: call.call_type, // Direct mapping
+    id: call.call_id,
+    callerName: call.caller_name || 'Unknown Caller',
+    callerNumber: call.caller_phone,
+    timestamp: call.created_at,
+    type: call.call_type,
+    summary: call.summary || null,
     status: displayStatus,
-    category: call.category,
-    summary: call.summary || undefined, // mapped from sms_summary_th
-    recording: hasValidRecordingUrl, // อัปเดตตรงนี้
+    recordingUrl: hasValidRecordingUrl ? call.voice_log : null,
+    contact_status: call.contact_status,
+    confidence: call.confidence,
+    spam_risk_score: call.spam_risk_score,
+    category_description: call.category_description,
   };
 };
 
 
 export const DashboardPage: React.FC = () => {
-  const {
-    user,
-    userSettings,
-    userState,
-    updateUserSettings,
-    updateUserState
-  } = useAuth();
-  const [calls, setCalls] = useState<CallDisplay[]>([]);
-  const [timeFilter, setTimeFilter] = useState<string>('today');
-  const [isLoading, setIsLoading] = useState(true);
+  const { user, userSettings, userState, updateUserSettings } = useAuth();
+  const navigate = useNavigate();
+  
+  const [recentCalls, setRecentCalls] = useState<CallLog[]>([]);
+  const [isLoadingCalls, setIsLoadingCalls] = useState(false);
+  const [callsError, setCallsError] = useState<string | null>(null);
+  
+  const [playingCallId, setPlayingCallId] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [isUpdatingQuickAction, setIsUpdatingQuickAction] = useState(false);
 
-  // Load calls
+  // MODIFIED (Fix Infinite Loop):
+  // 1. Define fetchRecentCalls using useCallback, but WITHOUT 'isLoadingCalls' dependency
+  const fetchRecentCalls = useCallback(async () => {
+    // 2. We use a local loading check to prevent re-entry if already loading
+    //    (though useEffect dependency [user] should already handle this)
+    
+    setIsLoadingCalls(true);
+    setCallsError(null);
+    setAudioError(null);
+
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+      setPlayingCallId(null);
+    }
+
+    try {
+      // 3. Call service (no userId)
+      const response = await callsService.getAllCalls('week', { limit: 5 });
+      setRecentCalls(response.items || []);
+    } catch (err) {
+      console.error('Failed to fetch recent calls:', err);
+      setCallsError('Failed to load recent activity.');
+    } finally {
+      setIsLoadingCalls(false);
+    }
+  }, []); // <--- Empty dependency array is correct here
+
+  // 4. useEffect depends on 'user' (so it runs on login) and 'fetchRecentCalls'
   useEffect(() => {
-    const loadCalls = async () => {
-      // Ensure user object and user_id are available
-      if (!user?.user_id) {
-          console.warn("User ID not available, skipping call load.");
-          setIsLoading(false); // Stop loading if no user ID
-          return;
-      }
-      setIsLoading(true);
-      try {
-        // Pass user.user_id to the service call
-        const response = await callsService.getCalls(user.user_id, timeFilter);
-        const displayCalls: CallDisplay[] = response.items.map(mapCallLogToDisplay); // Use helper function
-        setCalls(displayCalls);
-      } catch (error) {
-        console.error('Failed to load calls:', error);
-      } finally {
-        setIsLoading(false);
+    if (user) {
+      fetchRecentCalls();
+    }
+    
+    // Cleanup audio on unmount
+    return () => {
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
       }
     };
-    loadCalls();
-  }, [user, timeFilter]); // Include user in dependency array
+  }, [user, fetchRecentCalls]); // <--- This is now safe
 
+  // Map calls for display (Case 11)
+  const displayedCalls = recentCalls.map(mapCallLogToDisplay);
+  
+  // ADDED (Case 11 / Case 7): Audio playback handler
+  const handleListenRecording = async (callId: string) => {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.src = '';
+      currentAudio = null;
+    }
+    if (playingCallId === callId) {
+      setPlayingCallId(null);
+      setAudioError(null);
+      return;
+    }
+    setPlayingCallId(callId);
+    setAudioError(null);
+    try {
+      const audioData = await callsService.getCallAudio(callId);
+      const audioSrc = `data:${audioData.mimeType};base64,${audioData.data}`;
+      currentAudio = new Audio(audioSrc);
+      currentAudio.onended = () => {
+        setPlayingCallId(null);
+        currentAudio = null;
+      };
+      currentAudio.onerror = () => {
+        setAudioError(`Failed to play audio for ${callId}.`);
+        setPlayingCallId(null);
+        currentAudio = null;
+      };
+      await currentAudio.play();
+    } catch (err) {
+      setAudioError('Failed to fetch or play audio.');
+      setPlayingCallId(null);
+    }
+  };
 
-  // --- Handlers for CallItem actions (Keep as examples) ---
-  const handleListenRecording = (callId: string) => {
-    // Note: The play button was removed from CallItem in the previous step.
-    // This function might not be directly used by CallItem now.
-    console.log(`Listen recording action triggered for call ${callId}, navigate to detail page.`);
-     // Example navigation (if using useNavigate hook from react-router-dom):
-    // navigate(`/calls/${callId}`);
-  };
-  const handleCallback = (callNumber: string) => {
-    alert(`Calling back ${callNumber}. (Implement actual call logic)`);
-  };
-  const handleAddToWhitelist = (callNumber: string) => {
-     // TODO: Implement actual API call using contactsService.updateContact
-    alert(`Added ${callNumber} to whitelist. (Implement backend update)`);
-     // Optimistically update UI or refetch data
-  };
-  const handleAddToBlacklist = (callNumber: string) => {
-     // TODO: Implement actual API call using contactsService.updateContact
-    alert(`Added ${callNumber} to blacklist. (Implement backend update)`);
-     // Optimistically update UI or refetch data
-  };
-  // -----------------------------------------------------------
+  // (Case 11) Handlers for CallItem
+  const handleCallback = (callNumber: string) => window.location.href = `tel:${callNumber}`;
+  const handleAddToWhitelist = (callNumber: string) => console.log(`Whitelist: ${callNumber}`); // TODO: Implement
+  const handleAddToBlacklist = (callNumber: string) => console.log(`Blacklist: ${callNumber}`); // TODO: Implement
 
-
-  // --- Handlers for Quick Actions ---
+  // --- Quick Actions Handlers (Case 12) ---
   const handleSetAnnouncement = () => {
-    // Check if userSettings is available before accessing its properties
-    if (!userSettings) {
-        console.error("UserSettings not available");
-        alert("Cannot set announcement, settings not loaded.");
-        return;
-    }
-    const message = prompt('Enter your announcement message:', userSettings.announcement || '');
-    if (message !== null) { // User didn't cancel the prompt
-      const now = new Date();
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      // Call updateUserSettings from AuthContext
-      updateUserSettings({
-        announcement: message || null, // Store null if message is empty
-        // Reset times if clearing the announcement, or set them if adding one
-        announcement_from: message ? now.toISOString() : null,
-        announcement_to: message ? tomorrow.toISOString() : null,
-      }).then(() => {
-         alert('Announcement updated!');
-          // updateUserState might be called automatically within updateUserSettings if you implemented it there
-          // Or call it manually if needed:
-          // updateUserState({ statusMessage: message ? 'Announcement is active' : 'Your AI Secretary is active'});
-      }).catch((err) => {
-          console.error("Failed to update announcement:", err);
-          // Error alert is handled within updateUserSettings in AuthContext
-      });
-    }
+    navigate('/settings');
   };
 
-  const handleToggleDND = () => {
-    if (!userSettings) {
-        console.error("UserSettings not available");
-        alert("Cannot toggle DND, settings not loaded.");
-        return;
+  const handleToggleDND = async () => {
+    setIsUpdatingQuickAction(true);
+    try {
+      await updateUserSettings({ dnd_active: !userSettings.dnd_active });
+    } catch (e) {
+      console.error("Failed to toggle DND", e);
+    } finally {
+      setIsUpdatingQuickAction(false);
     }
-    const newDndActive = !userSettings.dnd_active;
-    updateUserSettings({
-      dnd_active: newDndActive,
-      // Optionally reset dnd times if turning off? Depends on desired logic.
-      // dnd_start: newDndActive ? userSettings.dnd_start : null,
-      // dnd_end: newDndActive ? userSettings.dnd_end : null,
-    }).then(() => {
-        alert(`Do Not Disturb ${newDndActive ? 'enabled' : 'disabled'}.`);
-        // updateUserState should be handled within updateUserSettings based on new settings
-    }).catch((err) => {
-         console.error("Failed to toggle DND:", err);
-    });
   };
 
   const handleCallForwarding = () => {
-    // Note: Call forwarding state is currently local UI state (userState) in AuthContext
-    // It's not saved via updateUserSettings unless UserSettings type is updated
-    const number = prompt('Enter the number to forward calls to (leave blank to disable):', userState.forwardingNumber || '');
-    if (number !== null) { // User didn't cancel
-      const isForwarding = !!number; // True if number is not empty
-      updateUserState({ // Update local UI state
-        callForwarding: isForwarding,
-        forwardingNumber: number || '', // Store empty string if disabled
-        // Update status based on forwarding state
-        status: isForwarding ? 'away' : 'available',
-        statusMessage: isForwarding
-          ? `Calls are being forwarded to ${number}`
-          : 'Your AI Secretary is active and handling calls'
-      });
-      alert(`Call forwarding ${isForwarding ? `enabled to ${number}` : 'disabled'}.`);
-      // TODO: If call forwarding needs to be saved persistently,
-      // you'd need to add corresponding fields to UserSettings and call updateUserSettings here.
-    }
+    navigate('/settings'); 
   };
-  // ------------------------------------
 
-  // Update quickActions based on the latest state/settings
-  const quickActions = [
-     {
-        icon: <MessageSquarePlusIcon size={24} />,
-        label: userSettings?.announcement ? 'Edit Announcement' : 'Set Announcement',
-        onClick: handleSetAnnouncement,
-        color: 'bg-primary/10 border-primary/20 text-primary'
-      }, {
-        icon: <BellOffIcon size={24} />,
-        label: userSettings?.dnd_active ? 'Disable DND' : 'Do Not Disturb',
-        onClick: handleToggleDND,
-        // Color changes based on DND status
-        color: userSettings?.dnd_active ? 'bg-success/10 border-success/20 text-success' : 'bg-error/10 border-error/20 text-error'
-      }, {
-        icon: <PhoneForwardedIcon size={24} />,
-        label: userState.callForwarding ? 'Change Forwarding' : 'Call Forwarding',
-        onClick: handleCallForwarding,
-         // Color changes based on forwarding status
-        color: userState.callForwarding ? 'bg-success/10 border-success/20 text-success' : 'bg-secondary/10 border-secondary/20 text-secondary'
-      }
-  ];
+  // (Case 12) Check settings for announcement
+  const activeAnnouncement = userSettings?.announcement || null;
 
   return (
-     <div className="space-y-6 pb-20 md:pb-6"> {/* Add padding-bottom for mobile nav */}
-      <h1 className="text-2xl font-semibold mb-6">Dashboard</h1>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1">
-          {/* StatusCard uses userState from context */}
-          <StatusCard
-            status={userState.status}
-            message={userState.statusMessage}
-            duration={userSettings?.dnd_active ? 'Until manually disabled' : undefined} // Example duration display
-          />
-        </div>
-        <div className="lg:col-span-2">
-          <h2 className="text-lg font-medium mb-3">Quick Actions</h2>
-          {/* QuickActionsBar uses updated quickActions array */}
-          <QuickActionsBar actions={quickActions} />
-        </div>
-      </div>
-      <div className="mt-8">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-medium">Recent Activity</h2>
-          <div className="flex items-center">
-            <select
-              className="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-              value={timeFilter}
-              onChange={e => setTimeFilter(e.target.value)}
-            >
-              <option value="today">Today</option>
-              <option value="yesterday">Yesterday</option>
-              <option value="week">This Week</option>
-              <option value="month">This Month</option>
-              <option value="all">All Time</option>
-            </select>
-          </div>
-        </div>
-        {/* CallsList displays calls fetched in this component */}
-        <CallsList
-            calls={calls}
-            isLoading={isLoading}
-            onListenRecording={handleListenRecording} // Pass down handlers
-            onCallback={handleCallback}
-            onAddToWhitelist={handleAddToWhitelist}
-            onAddToBlacklist={handleAddToBlacklist}
-          />
+    <div className="p-4 md:p-6">
+      <h1 className="text-2xl font-semibold mb-4">
+        Welcome back, {user?.owner_name || 'User'}!
+      </h1>
+
+      {/* (Case 12) Status Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <StatusCard 
+          title="Availability"
+          value={userState.status === 'available' ? 'Available' : (userState.status === 'dnd' ? 'DND' : 'Unavailable')}
+          description={userState.statusMessage || 'Loading...'}
+          icon={<UserCheckIcon />}
+          status={userState.status === 'available' ? 'active' : (userState.status === 'dnd' ? 'dnd' : 'inactive')}
+        />
+        <StatusCard 
+          title="Missed Calls (Today)" 
+          value="3" // TODO: This should come from an API
+          description="View all missed calls" 
+          icon={<PhoneMissedIcon />}
+          status="warning" 
+          linkTo="/calls" 
+        />
+        <StatusCard 
+          title="Spam Blocked (Week)" 
+          value="12" // TODO: This should come from an API
+          description="See spam statistics" 
+          icon={<AlertTriangleIcon />} 
+          status="inactive" 
+          linkTo="/calls" 
+        />
       </div>
 
-      {/* Bottom Action Bar for Mobile - Uses handlers directly */}
-      <div className="fixed bottom-0 left-0 right-0 md:hidden bg-white border-t shadow-lg px-4 py-3 flex justify-around">
-         <button className="flex flex-col items-center p-2 text-center" onClick={handleSetAnnouncement}>
-          {/* Icon color/style can reflect state */}
-          <span className={`w-10 h-10 flex items-center justify-center ${userSettings?.announcement ? 'bg-success/10 text-success' : 'bg-primary/10 text-primary'} rounded-full`}>
+      {/* Quick Actions Bar */}
+      <div className="bg-white rounded-lg shadow-sm border px-4 py-3 flex justify-around mb-6">
+         <button 
+           className="flex flex-col items-center p-2 text-center" 
+           onClick={handleSetAnnouncement}
+           disabled={isUpdatingQuickAction}
+         >
+          <span className={`w-10 h-10 flex items-center justify-center ${activeAnnouncement ? 'bg-yellow-100 text-yellow-600' : 'bg-primary-100 text-primary'} rounded-full`}>
             <MessageSquarePlusIcon size={20} />
           </span>
           <span className="text-xs mt-1">Announcement</span>
         </button>
-        <button className="flex flex-col items-center p-2 text-center" onClick={handleToggleDND}>
-           {/* Icon color reflects DND state */}
-          <span className={`w-10 h-10 flex items-center justify-center ${userSettings?.dnd_active ? 'bg-success/10 text-success' : 'bg-error/10 text-error'} rounded-full`}>
+        <button 
+          className="flex flex-col items-center p-2 text-center" 
+          onClick={handleToggleDND}
+          disabled={isUpdatingQuickAction}
+        >
+          <span className={`w-10 h-10 flex items-center justify-center ${userSettings.dnd_active ? 'bg-destructive-100 text-destructive' : 'bg-gray-100 text-gray-600'} rounded-full`}>
             <BellOffIcon size={20} />
           </span>
           <span className="text-xs mt-1">DND</span>
         </button>
-        <button className="flex flex-col items-center p-2 text-center" onClick={handleCallForwarding}>
-          {/* Icon color reflects forwarding state */}
-          <span className={`w-10 h-10 flex items-center justify-center ${userState.callForwarding ? 'bg-success/10 text-success' : 'bg-secondary/10 text-secondary'} rounded-full`}>
+        <button 
+          className="flex flex-col items-center p-2 text-center" 
+          onClick={handleCallForwarding}
+          disabled={isUpdatingQuickAction}
+        >
+          <span className={`w-10 h-10 flex items-center justify-center ${userState.callForwarding ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'} rounded-full`}>
             <PhoneForwardedIcon size={20} />
           </span>
-          <span className="text-xs mt-1">Forward</span>
+          <span className="text-xs mt-1">Forwarding</span>
         </button>
+      </div>
+      
+      {/* Audio Error Display (Case 11) */}
+      {audioError && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative my-4" role="alert">
+          <AlertTriangleIcon className="inline w-5 h-5 mr-2" />
+          <strong className="font-bold">Audio Error: </strong>
+          <span className="block sm:inline">{audioError}</span>
+        </div>
+      )}
+
+      {/* MODIFIED (Case 11): Recent Activity List */}
+      <div className="mt-8">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">Recent Activity</h2>
+          <Link to="/calls" className="text-sm text-primary hover:underline">
+            View All
+          </Link>
+        </div>
+        
+        {callsError && (
+          <div className="text-destructive p-4 bg-red-50 rounded-md">{callsError}</div>
+        )}
+
+        {/* Use the CallsList component and pass audio handlers */}
+        <CallsList
+          calls={displayedCalls}
+          isLoading={isLoadingCalls}
+          onListenRecording={handleListenRecording}
+          playingCallId={playingCallId}
+          onCallback={handleCallback}
+          onAddToWhitelist={handleAddToWhitelist}
+          onAddToBlacklist={handleAddToBlacklist}
+        />
       </div>
     </div>
   );
