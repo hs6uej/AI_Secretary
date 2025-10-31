@@ -1,6 +1,6 @@
 // src/services/contactsService.ts
 import api from './api';
-import { Contact } from '../types/contact';
+import { Contact, ContactStatus } from '../types/contact'; // (แก้ไข: import ContactStatus)
 
 // Interface for API response
 interface GetContactsApiResponse {
@@ -32,7 +32,7 @@ export const contactsService = {
   updateContact: async (
     userId: string, 
     callerNumber: string, 
-    data: { caller_name?: string, status?: 'WHITELISTED' | 'BLACKLISTED' | 'UNKNOWN', notes?: string }
+    data: { caller_name?: string, status?: ContactStatus, notes?: string } // (แก้ไข: ใช้ ContactStatus)
   ): Promise<Contact> => {
     // We must encode callerNumber if it contains special chars (like '+')
     const encodedCallerNumber = encodeURIComponent(callerNumber);
@@ -46,11 +46,19 @@ export const contactsService = {
   addContact: async (data: {
     caller_number: string, 
     caller_name?: string, 
-    status: 'WHITELISTED' | 'BLACKLISTED' | 'UNKNOWN', 
+    status: ContactStatus, // (แก้ไข: ใช้ ContactStatus)
     notes?: string 
   }): Promise<Contact> => {
     // userId is not needed in body, it's from the token
     const response = await api.post<Contact>('/contacts', data);
     return response.data;
   },
+
+  // --- ADDED: ฟังก์ชันสำหรับลบ Contact ---
+  deleteContact: async (userId: string, callerNumber: string): Promise<void> => {
+    const encodedCallerNumber = encodeURIComponent(callerNumber);
+    // Endpoint: DELETE /api/contacts/:userId/:callerNumber
+    await api.delete(`/contacts/${userId}/${encodedCallerNumber}`);
+  },
+  // --- END ADDED ---
 };

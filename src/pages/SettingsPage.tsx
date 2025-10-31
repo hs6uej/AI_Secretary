@@ -1,60 +1,117 @@
-// src/pages/SettingsPage.tsx
+// src/pages/SettingsPage.tsx (FIXED: Added DND controls)
 import React, { useState, useEffect } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { useAuth } from '../context/AuthContext';
 import { 
   UserIcon, BellIcon, ShieldIcon, LogOutIcon, 
-  SaveIcon, RefreshCwIcon, AlertTriangleIcon 
+  SaveIcon, RefreshCwIcon, AlertTriangleIcon, ClockIcon 
 } from 'lucide-react';
-// ADDED (Case 12, 15): Import type for saving
 import { UpdateSettingsData } from '../services/settingsService';
+
+// --- ADDED: Import useLocation ---
+import { useLocation } from 'react-router-dom';
+
+// --- ADDED: Toggle Switch Component (สำหรับ DND) ---
+const ToggleSwitch: React.FC<{
+  enabled: boolean;
+  onChange: (enabled: boolean) => void;
+  srLabel: string;
+}> = ({ enabled, onChange, srLabel }) => {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!enabled)}
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+        enabled ? 'bg-primary' : 'bg-gray-200'
+      }`}
+      role="switch"
+      aria-checked={enabled}
+    >
+      <span className="sr-only">{srLabel}</span>
+      <span
+        aria-hidden="true"
+        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+          enabled ? 'translate-x-5' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  );
+};
+// --- END ADDED ---
+
 
 export const SettingsPage: React.FC = () => {
   const {
     user,
     logout,
     userSettings,
-    updateUserSettings, // This is the new function from context
+    updateUserSettings,
   } = useAuth();
   
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState<'profile' | 'secretary' | 'security'>('profile');
   
-  // --- Form States (Combined for simplicity) ---
+  // --- Form States ---
   const [name, setName] = useState('');
-  const [spelling, setSpelling] = useState(''); // (Case 15)
-  const [announcement, setAnnouncement] = useState(''); // (Case 12)
-  // TODO: Add DND/Forwarding states here
+  const [spelling, setSpelling] = useState(''); 
+  const [announcement, setAnnouncement] = useState(''); 
+  
+  // --- ADDED: DND States ---
+  const [fDnd, setFDnd] = useState(false);
+  const [fDndStart, setFDndStart] = useState('22:00');
+  const [fDndEnd, setFDndEnd] = useState('07:00');
   
   // --- General States ---
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Load initial data from context
+  // useEffect (อ่าน Hash URL)
+  useEffect(() => {
+    const hash = location.hash.replace('#', ''); 
+    if (hash === 'secretary' || hash === 'ai_secretary') {
+      setActiveTab('secretary');
+    } else if (hash === 'security') {
+      setActiveTab('security');
+    } else {
+      setActiveTab('profile'); 
+    }
+  }, [location.hash]); 
+
+  // --- MODIFIED: Load initial data (เพิ่ม DND) ---
   useEffect(() => {
     if (user) {
       setName(user.owner_name || '');
-      setSpelling(user.owner_name_spelling || ''); // (Case 15)
+      setSpelling(user.owner_name_spelling || ''); 
     }
     if (userSettings) {
-      setAnnouncement(userSettings.announcement || ''); // (Case 12)
-      // TODO: Set DND/Forwarding states here
+      setAnnouncement(userSettings.announcement || ''); 
+      
+      // Load DND settings from context (ที่ตอนนี้ดึงมาจาก DB ถูกต้องแล้ว)
+      setFDnd(userSettings.dnd_active || false);
+      setFDndStart(userSettings.dnd_start || '22:00');
+      setFDndEnd(userSettings.dnd_end || '07:00');
     }
   }, [user, userSettings]);
 
-  // MODIFIED (Case 12, 15): Combined Save Handler
+  // --- MODIFIED: Combined Save Handler (เพิ่ม DND) ---
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
     setSuccess(null);
 
+    // รวบรวมข้อมูลทั้งหมดที่จะส่ง
     const updateData: UpdateSettingsData = {
       owner_name: name,
-      owner_name_spelling: spelling, // (Case 15)
-      announcement: announcement, // (Case 12)
-      // TODO: Add DND/Forwarding fields
+      owner_name_spelling: spelling,
+      announcement: announcement,
+      
+      // ส่งข้อมูล DND
+      dnd_active: fDnd,
+      dnd_start: fDnd ? fDndStart : null, // ส่งค่าเวลาต่อเมื่อ DND เปิด
+      dnd_end: fDnd ? fDndEnd : null,
     };
 
     try {
@@ -68,15 +125,15 @@ export const SettingsPage: React.FC = () => {
     }
   };
   
-  // ADDED (Case 12): Handler to clear announcement
+  // Handler (Cancel Announcement)
   const handleCancelAnnouncement = async () => {
     setIsLoading(true);
     setError(null);
     setSuccess(null);
     try {
-      // Call update with only the announcement field set to null
+      // ส่งเฉพาะ announcement: null
       await updateUserSettings({ announcement: null });
-      setAnnouncement(''); // Clear local input
+      setAnnouncement(''); 
       setSuccess('Announcement cancelled successfully!');
     } catch (err) {
       setError('Failed to cancel announcement.');
@@ -126,6 +183,7 @@ export const SettingsPage: React.FC = () => {
         {/* Profile Settings */}
         {activeTab === 'profile' && (
           <div className="bg-white rounded-lg shadow-sm p-6 border">
+            {/* ... (ส่วน Profile เหมือนเดิม) ... */}
             <h2 className="text-lg font-medium mb-6">Profile Settings</h2>
             <div className="space-y-4">
               <Input
@@ -135,7 +193,6 @@ export const SettingsPage: React.FC = () => {
                 onChange={(e) => setName(e.target.value)}
                 fullWidth
               />
-              {/* ADDED (Case 15): Spelling Field */}
               <Input
                 label="Spelling (คำอ่าน)"
                 id="spelling"
@@ -156,8 +213,8 @@ export const SettingsPage: React.FC = () => {
                 label="Email (Optional)"
                 id="email"
                 type="email"
-                placeholder="p.golf@example.com"
-                disabled // Assuming email isn't editable for now
+                placeholder="napaphon@example.com"
+                disabled 
                 fullWidth
                 className="bg-gray-100"
               />
@@ -170,7 +227,7 @@ export const SettingsPage: React.FC = () => {
           <div className="bg-white rounded-lg shadow-sm p-6 border">
             <h2 className="text-lg font-medium mb-6">AI Secretary Settings</h2>
             <div className="space-y-6">
-              {/* MODIFIED (Case 12): Announcement Field */}
+              {/* Announcement Field */}
               <div>
                 <label htmlFor="announcement" className="block text-sm font-medium text-gray-700 mb-1">
                   Active Announcement
@@ -183,7 +240,6 @@ export const SettingsPage: React.FC = () => {
                   value={announcement}
                   onChange={(e) => setAnnouncement(e.target.value)}
                 />
-                {/* ADDED (Case 12): Cancel Button */}
                 {announcement && (
                   <Button
                     type="button"
@@ -198,7 +254,49 @@ export const SettingsPage: React.FC = () => {
                 )}
               </div>
               
-              {/* TODO: Add DND / Call Forwarding controls here */}
+              {/* --- ADDED: DND Controls --- */}
+              <div className="border-t pt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-700">Do Not Disturb (DND)</span>
+                    <span className="text-xs text-gray-500">Silence all calls during specific hours.</span>
+                  </span>
+                  <ToggleSwitch
+                    enabled={fDnd}
+                    onChange={setFDnd}
+                    srLabel="Toggle Do Not Disturb"
+                  />
+                </div>
+
+                {/* Show time inputs only if DND is enabled */}
+                {fDnd && (
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                      <Input
+                        label="Start Time"
+                        id="dnd_start"
+                        type="time" 
+                        value={fDndStart} 
+                        onChange={e => setFDndStart(e.target.value)} 
+                        leftIcon={<ClockIcon size={16} className="text-gray-500" />}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <Input
+                        label="End Time"
+                        id="dnd_end"
+                        type="time" 
+                        value={fDndEnd} 
+                        onChange={e => setFDndEnd(e.target.value)} 
+                        leftIcon={<ClockIcon size={16} className="text-gray-500" />}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* --- END ADDED --- */}
+              
+              {/* TODO: Add Call Forwarding controls here */}
               
             </div>
           </div>
@@ -207,6 +305,7 @@ export const SettingsPage: React.FC = () => {
         {/* Security Settings */}
         {activeTab === 'security' && (
           <div className="bg-white rounded-lg shadow-sm p-6 border">
+             {/* ... (ส่วน Security เหมือนเดิม) ... */}
             <h2 className="text-lg font-medium mb-6">Security Settings</h2>
             <div className="space-y-6">
               <div>

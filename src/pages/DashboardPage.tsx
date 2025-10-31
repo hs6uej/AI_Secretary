@@ -1,4 +1,4 @@
-// src/pages/DashboardPage.tsx
+// src/pages/DashboardPage.tsx (FIXED - Final Version)
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { StatusCard } from '../components/dashboard/StatusCard';
@@ -11,41 +11,44 @@ import {
   UserCheckIcon, PhoneMissedIcon, AlertTriangleIcon, RefreshCwIcon 
 } from 'lucide-react';
 
+// ADDED: จำเป็นสำหรับการคำนวณ Stats
+import { isSameDay, isSameWeek } from 'date-fns';
+
 // (Case 11) Audio player instance
 let currentAudio: HTMLAudioElement | null = null;
 
 // (Case 11 / Case 9, 8, 5) Helper function to map data for CallItem
 const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
-   let displayStatus: CallDisplay['status'] = 'other';
-   if (call.processing_status === 'failed') {
-    displayStatus = 'failed';
-  } else if (call.processing_status === 'processing' || call.processing_status === 'in_progress') {
-    displayStatus = 'processing';
-  } else if (call.call_type === 'Missed') {
-    displayStatus = 'missed';
-  } else if (call.call_type === 'Incoming' || call.call_type === 'Outgoing') {
+    let displayStatus: CallDisplay['status'] = 'other';
+    if (call.processing_status === 'failed') {
+     displayStatus = 'failed';
+   } else if (call.processing_status === 'processing' || call.processing_status === 'in_progress') {
+     displayStatus = 'processing';
+   } else if (call.call_type === 'Missed') {
+     displayStatus = 'missed';
+   } else if (call.call_type === 'Incoming' || call.call_type === 'Outgoing') {
      if (['completed', 'ended', 'scheduled'].includes(call.processing_status || '')) {
        displayStatus = 'answered';
      } else if (call.processing_status === 'declined_spam') {
        displayStatus = 'blocked';
      }
-  }
-  const hasValidRecordingUrl = !!call.voice_log;
+   }
+   const hasValidRecordingUrl = !!call.voice_log;
 
-  return {
-    id: call.call_id,
-    callerName: call.caller_name || 'Unknown Caller',
-    callerNumber: call.caller_phone,
-    timestamp: call.created_at,
-    type: call.call_type,
-    summary: call.summary || null,
-    status: displayStatus,
-    recordingUrl: hasValidRecordingUrl ? call.voice_log : null,
-    contact_status: call.contact_status,
-    confidence: call.confidence,
-    spam_risk_score: call.spam_risk_score,
-    category_description: call.category_description,
-  };
+   return {
+     id: call.call_id,
+     callerName: call.caller_name || 'Unknown Caller',
+     callerNumber: call.caller_phone,
+     timestamp: call.created_at,
+     type: call.call_type,
+     summary: call.summary || null,
+     status: displayStatus,
+     recordingUrl: hasValidRecordingUrl ? call.voice_log : null,
+     contact_status: call.contact_status,
+     confidence: call.confidence,
+     spam_risk_score: call.spam_risk_score,
+     category_description: call.category_description,
+   };
 };
 
 
@@ -53,20 +56,17 @@ export const DashboardPage: React.FC = () => {
   const { user, userSettings, userState, updateUserSettings } = useAuth();
   const navigate = useNavigate();
   
-  const [recentCalls, setRecentCalls] = useState<CallLog[]>([]);
-  const [isLoadingCalls, setIsLoadingCalls] = useState(false);
+  // MODIFIED: เปลี่ยนชื่อ State เพื่อความชัดเจน
+  const [callsData, setCallsData] = useState<CallLog[]>([]);
+  const [isLoadingCalls, setIsLoadingCalls] = useState(true); // (แก้เป็น true)
   const [callsError, setCallsError] = useState<string | null>(null);
   
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isUpdatingQuickAction, setIsUpdatingQuickAction] = useState(false);
 
-  // MODIFIED (Fix Infinite Loop):
-  // 1. Define fetchRecentCalls using useCallback, but WITHOUT 'isLoadingCalls' dependency
-  const fetchRecentCalls = useCallback(async () => {
-    // 2. We use a local loading check to prevent re-entry if already loading
-    //    (though useEffect dependency [user] should already handle this)
-    
+  // MODIFIED (Fix Infinite Loop & Data Fetching):
+  const fetchCallsData = useCallback(async () => {
     setIsLoadingCalls(true);
     setCallsError(null);
     setAudioError(null);
@@ -78,9 +78,11 @@ export const DashboardPage: React.FC = () => {
     }
 
     try {
-      // 3. Call service (no userId)
-      const response = await callsService.getAllCalls('week', { limit: 5 });
-      setRecentCalls(response.items || []);
+      // MODIFIED:
+      // 1. เรียก 'week' (ตามเดิม)
+      // 2. เอา limit: 5 ออก เพื่อให้ได้ข้อมูลทั้งสัปดาห์มาคำนวณ Stats
+      const response = await callsService.getAllCalls('week', {});
+      setCallsData(response.items || []);
     } catch (err) {
       console.error('Failed to fetch recent calls:', err);
       setCallsError('Failed to load recent activity.');
@@ -89,10 +91,9 @@ export const DashboardPage: React.FC = () => {
     }
   }, []); // <--- Empty dependency array is correct here
 
-  // 4. useEffect depends on 'user' (so it runs on login) and 'fetchRecentCalls'
   useEffect(() => {
     if (user) {
-      fetchRecentCalls();
+      fetchCallsData();
     }
     
     // Cleanup audio on unmount
@@ -102,10 +103,28 @@ export const DashboardPage: React.FC = () => {
         currentAudio = null;
       }
     };
-  }, [user, fetchRecentCalls]); // <--- This is now safe
+  }, [user, fetchCallsData]);
 
-  // Map calls for display (Case 11)
-  const displayedCalls = recentCalls.map(mapCallLogToDisplay);
+  // --- ADDED: Logic คำนวณ Stats ---
+  const today = new Date();
+  
+  // คำนวณ Missed Calls (Today)
+  const missedCallsToday = callsData.filter(call => 
+    (call.call_type === 'Missed' || call.call_outcome === 'missed') && // ตรวจสอบทั้ง 2 field
+    isSameDay(new Date(call.created_at), today)
+  ).length;
+
+  // คำนวณ Spam Blocked (Week) - (ข้อมูล 'week' ถูกต้องแล้ว)
+  const spamBlockedThisWeek = callsData.filter(call =>
+    (call.category === 'SPAM' || (call.spam_risk_score && call.spam_risk_score > 0.8)) &&
+    (call.call_outcome === 'blocked' || call.processing_status === 'declined_spam') && // ตรวจสอบทั้ง 2 field
+    isSameWeek(new Date(call.created_at), today)
+  ).length;
+  // --- END ADDED ---
+
+
+  // MODIFIED: Map ข้อมูล 5 รายการล่าสุดสำหรับ List
+  const displayedCalls = callsData.slice(0, 5).map(mapCallLogToDisplay);
   
   // ADDED (Case 11 / Case 7): Audio playback handler
   const handleListenRecording = async (callId: string) => {
@@ -147,9 +166,12 @@ export const DashboardPage: React.FC = () => {
   const handleAddToBlacklist = (callNumber: string) => console.log(`Blacklist: ${callNumber}`); // TODO: Implement
 
   // --- Quick Actions Handlers (Case 12) ---
+
+  // --- MODIFIED: ชี้ไปที่ Tab #ai_secretary ---
   const handleSetAnnouncement = () => {
-    navigate('/settings');
+    navigate('/settings#ai_secretary');
   };
+  // --- END MODIFICATION ---
 
   const handleToggleDND = async () => {
     setIsUpdatingQuickAction(true);
@@ -184,21 +206,24 @@ export const DashboardPage: React.FC = () => {
           icon={<UserCheckIcon />}
           status={userState.status === 'available' ? 'active' : (userState.status === 'dnd' ? 'dnd' : 'inactive')}
         />
+        
+        {/* --- MODIFIED: ใช้ค่าที่คำนวณได้ และแก้ Link --- */}
         <StatusCard 
           title="Missed Calls (Today)" 
-          value="3" // TODO: This should come from an API
+          value={missedCallsToday.toString()}
           description="View all missed calls" 
           icon={<PhoneMissedIcon />}
-          status="warning" 
-          linkTo="/calls" 
+          status={missedCallsToday > 0 ? "warning" : "inactive"} 
+          linkTo="/calls?filter=missed" 
         />
+        {/* --- MODIFIED: ใช้ค่าที่คำนวณได้ และแก้ Link --- */}
         <StatusCard 
           title="Spam Blocked (Week)" 
-          value="12" // TODO: This should come from an API
+          value={spamBlockedThisWeek.toString()}
           description="See spam statistics" 
           icon={<AlertTriangleIcon />} 
-          status="inactive" 
-          linkTo="/calls" 
+          status={spamBlockedThisWeek > 0 ? "warning" : "inactive"} 
+          linkTo="/calls?filter=spam" 
         />
       </div>
 
