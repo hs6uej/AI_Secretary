@@ -1,4 +1,4 @@
-// src/pages/CallDetailPage.tsx
+// src/pages/CallDetailPage.tsx (FIXED: Font size in Log)
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -463,20 +463,23 @@ export const CallDetailPage: React.FC = () => {
                       try {
                         const parsed = JSON.parse(segment.text);
                         return (
-                          <pre className="text-xs whitespace-pre-wrap font-sans">
+                          // <--- แก้ไข (1): เปลี่ยน text-xs เป็น text-sm และ font-sans เป็น font-inter
+                          <pre className="text-sm whitespace-pre-wrap font-inter">
                             {parsed.response || JSON.stringify(parsed, null, 2)}
                           </pre>
                         );
                       } catch {
                         return (
-                          <div className="text-gray-800 whitespace-pre-wrap">
+                          // <--- แก้ไข (2): เพิ่ม text-sm
+                          <div className="text-sm text-gray-800 whitespace-pre-wrap">
                             {segment.text}
                           </div>
                         );
                       }
                     })()
                   ) : (
-                    <div className="text-gray-800 whitespace-pre-wrap">
+                    // <--- แก้ไข (3): เพิ่ม text-sm
+                    <div className="text-sm text-gray-800 whitespace-pre-wrap">
                       {segment.text || '(No content)'}
                     </div>
                   )}
