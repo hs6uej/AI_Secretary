@@ -1,4 +1,4 @@
-// src/pages/CallDetailPage.tsx (FIXED: Font size in Log)
+// src/pages/CallDetailPage.tsx (FIXED: Clickable phone number)
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -306,7 +306,16 @@ export const CallDetailPage: React.FC = () => {
             </div>
           )}
 
-          <div className="text-gray-500">{call.caller_phone}</div>
+          {/* --- MODIFICATION IS HERE --- */}
+          <a
+            href={`tel:${call.caller_phone}`}
+            className="text-gray-500 hover:text-primary hover:underline"
+            title={`Call ${call.caller_phone}`}
+          >
+            {call.caller_phone}
+          </a>
+          {/* --- END MODIFICATION --- */}
+          
           <div className="text-sm text-gray-500 mt-1">
             {callTime} &bull; {call.call_type} &bull; {call.category_description || 'N/A'}
           </div>
@@ -463,14 +472,12 @@ export const CallDetailPage: React.FC = () => {
                       try {
                         const parsed = JSON.parse(segment.text);
                         return (
-                          // <--- แก้ไข (1): เปลี่ยน text-xs เป็น text-sm และ font-sans เป็น font-inter
                           <pre className="text-sm whitespace-pre-wrap font-inter">
                             {parsed.response || JSON.stringify(parsed, null, 2)}
                           </pre>
                         );
                       } catch {
                         return (
-                          // <--- แก้ไข (2): เพิ่ม text-sm
                           <div className="text-sm text-gray-800 whitespace-pre-wrap">
                             {segment.text}
                           </div>
@@ -478,7 +485,6 @@ export const CallDetailPage: React.FC = () => {
                       }
                     })()
                   ) : (
-                    // <--- แก้ไข (3): เพิ่ม text-sm
                     <div className="text-sm text-gray-800 whitespace-pre-wrap">
                       {segment.text || '(No content)'}
                     </div>
