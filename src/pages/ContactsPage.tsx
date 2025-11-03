@@ -1,4 +1,4 @@
-// src/pages/ContactsPage.tsx (FIXED Mobile Layout)
+// src/pages/ContactsPage.tsx (FIXED: Correctly save cleared notes/name)
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { contactsService } from '../services/contactsService';
@@ -145,6 +145,7 @@ export const ContactsPage: React.FC = () => {
     setIsSubmitting(true);
     try {
       if (formMode === 'add') {
+        // (Logic for ADD mode is fine, server handles || null)
         await contactsService.addContact({
           caller_number: fNumber.trim(),
           caller_name: fName.trim() || undefined,
@@ -152,11 +153,19 @@ export const ContactsPage: React.FC = () => {
           notes: fNotes.trim() || undefined,
         });
       } else if (formMode === 'edit' && selectedContact) {
+        
+        // --- ‼️‼️ MODIFICATION IS HERE ‼️‼️ ---
+        // We must pass the trimmed string (even if empty "")
+        // We MUST NOT use "|| undefined" here
+        // server.js (PUT endpoint) expects the field to be defined
+        // and will handle "" as null.
         await contactsService.updateContact(selectedContact.user_id, selectedContact.caller_number, {
-          caller_name: fName.trim() || undefined,
+          caller_name: fName.trim(),
           status: fStatus,
-          notes: fNotes.trim() || undefined,
+          notes: fNotes.trim(),
         });
+        // --- ‼️‼️ END MODIFICATION ‼️‼️ ---
+        
       }
       setIsFormOpen(false);
       await fetchContacts(filter, searchTerm);
@@ -324,7 +333,7 @@ export const ContactsPage: React.FC = () => {
         title={formMode === 'add' ? 'Add Contact' : 'Edit Contact'}
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setIsFormOpen(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="outline" onClick={() => setIsFormOpen(false)} disabled={isSubmitting}>Cancel</Button>
             <Button onClick={submitForm} disabled={isSubmitting}>
               {isSubmitting ? 'Saving...' : (formMode === 'add' ? 'Add' : 'Save changes')}
             </Button>
@@ -358,6 +367,7 @@ export const ContactsPage: React.FC = () => {
               placeholder="(optional)"
               value={fName}
               onChange={e => setFName(e.target.value)}
+              disabled={isSubmitting}
             />
           </div>
 
@@ -365,9 +375,10 @@ export const ContactsPage: React.FC = () => {
           <div className="col-span-1">
             <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
             <select
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-100"
               value={fStatus}
               onChange={e => setFStatus(e.target.value.toUpperCase() as ContactStatus)}
+              disabled={isSubmitting}
             >
               <option value="WHITELISTED">WHITELISTED</option>
               <option value="BLACKLISTED">BLACKLISTED</option>
@@ -377,12 +388,27 @@ export const ContactsPage: React.FC = () => {
 
           {/* Notes */}
           <div className="col-span-1 md:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            {/* --- MODIFIED: Added flex layout and Clear button --- */}
+            <div className="flex justify-between items-center mb-1">
+              <label className="block text-sm font-medium text-gray-700">Notes</label>
+              {/* Show button only if there is text and not submitting */}
+              {fNotes && !isSubmitting && (
+                <button
+                  type="button"
+                  onClick={() => setFNotes('')}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  Clear note
+                </button>
+              )}
+            </div>
+            {/* --- END MODIFICATION --- */}
             <textarea
-              className="w-full min-h-[88px] rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full min-h-[88px] rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-100"
               placeholder="(optional)"
               value={fNotes}
               onChange={e => setFNotes(e.target.value)}
+              disabled={isSubmitting}
             />
           </div>
         </div>
@@ -395,7 +421,7 @@ export const ContactsPage: React.FC = () => {
         title="Delete Contact"
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setIsDeleteOpen(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="outline" onClick={() => setIsDeleteOpen(false)} disabled={isSubmitting}>Cancel</Button>
             <Button variant="destructive" onClick={confirmDelete} disabled={isSubmitting}>
               {isSubmitting ? 'Deleting...' : 'Delete'}
             </Button>
