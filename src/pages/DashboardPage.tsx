@@ -1,5 +1,5 @@
-// src/pages/DashboardPage.tsx (FIXED - Final Version)
-import React, { useEffect, useState, useCallback } from 'react';
+// src/pages/DashboardPage.tsx (FIXED: Race Condition on Audio Play)
+import React, { useEffect, useState, useCallback, useRef } from 'react'; // 1. Import useRef
 import { Link, useNavigate } from 'react-router-dom';
 import { StatusCard } from '../components/dashboard/StatusCard';
 import { CallsList } from '../components/dashboard/CallsList';
@@ -56,14 +56,16 @@ export const DashboardPage: React.FC = () => {
   const { user, userSettings, userState, updateUserSettings } = useAuth();
   const navigate = useNavigate();
   
-  // MODIFIED: เปลี่ยนชื่อ State เพื่อความชัดเจน
   const [callsData, setCallsData] = useState<CallLog[]>([]);
-  const [isLoadingCalls, setIsLoadingCalls] = useState(true); // (แก้เป็น true)
+  const [isLoadingCalls, setIsLoadingCalls] = useState(true);
   const [callsError, setCallsError] = useState<string | null>(null);
   
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isUpdatingQuickAction, setIsUpdatingQuickAction] = useState(false);
+
+  // 2. สร้าง Ref สำหรับ 'loading lock'
+  const isLoadingAudio = useRef(false);
 
   // MODIFIED (Fix Infinite Loop & Data Fetching):
   const fetchCallsData = useCallback(async () => {
@@ -76,11 +78,11 @@ export const DashboardPage: React.FC = () => {
       currentAudio = null;
       setPlayingCallId(null);
     }
+    
+    // 3. Reset lock
+    isLoadingAudio.current = false;
 
     try {
-      // MODIFIED:
-      // 1. เรียก 'week' (ตามเดิม)
-      // 2. เอา limit: 5 ออก เพื่อให้ได้ข้อมูลทั้งสัปดาห์มาคำนวณ Stats
       const response = await callsService.getAllCalls('week', {});
       setCallsData(response.items || []);
     } catch (err) {
@@ -89,7 +91,7 @@ export const DashboardPage: React.FC = () => {
     } finally {
       setIsLoadingCalls(false);
     }
-  }, []); // <--- Empty dependency array is correct here
+  }, []); 
 
   useEffect(() => {
     if (user) {
@@ -102,77 +104,112 @@ export const DashboardPage: React.FC = () => {
         currentAudio.pause();
         currentAudio = null;
       }
+      // 3. Reset lock on unmount
+      isLoadingAudio.current = false;
     };
   }, [user, fetchCallsData]);
 
-  // --- ADDED: Logic คำนวณ Stats ---
+  // (Stats logic - ไม่เปลี่ยนแปลง)
   const today = new Date();
-  
-  // คำนวณ Missed Calls (Today)
   const missedCallsToday = callsData.filter(call => 
-    (call.call_type === 'Missed' || call.call_outcome === 'missed') && // ตรวจสอบทั้ง 2 field
+    (call.call_type === 'Missed' || call.call_outcome === 'missed') &&
     isSameDay(new Date(call.created_at), today)
   ).length;
-
-  // คำนวณ Spam Blocked (Week) - (ข้อมูล 'week' ถูกต้องแล้ว)
   const spamBlockedThisWeek = callsData.filter(call =>
     (call.category === 'SPAM' || (call.spam_risk_score && call.spam_risk_score > 0.8)) &&
-    (call.call_outcome === 'blocked' || call.processing_status === 'declined_spam') && // ตรวจสอบทั้ง 2 field
+    (call.call_outcome === 'blocked' || call.processing_status === 'declined_spam') &&
     isSameWeek(new Date(call.created_at), today)
   ).length;
-  // --- END ADDED ---
 
-
-  // MODIFIED: Map ข้อมูล 5 รายการล่าสุดสำหรับ List
   const displayedCalls = callsData.slice(0, 5).map(mapCallLogToDisplay);
   
-  // ADDED (Case 11 / Case 7): Audio playback handler
+  // --- 4. (MODIFIED) แก้ไข handleListenRecording (ใช้ Logic เดียวกับ CallsPage) ---
   const handleListenRecording = async (callId: string) => {
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.src = '';
-      currentAudio = null;
-    }
+
+    // 1. ตรวจสอบก่อนว่า "กำลังกดปุ่มหยุด" หรือไม่
     if (playingCallId === callId) {
+      console.log('Stopping audio (already playing)...');
+      if (currentAudio) {
+          currentAudio.pause();
+          currentAudio.src = '';
+          currentAudio = null;
+      }
       setPlayingCallId(null);
       setAudioError(null);
+      isLoadingAudio.current = false; // บังคับปลด lock
       return;
     }
-    setPlayingCallId(callId);
+    
+    // 2. ถ้ากดปุ่มใหม่ ในขณะที่ "กำลังโหลด" (busy) เสียงอื่นอยู่
+    if (isLoadingAudio.current) {
+        console.warn('Audio is busy, please wait.');
+        return;
+    }
+
+    // 3. ถ้ากดปุ่มใหม่ ในขณะที่เสียงอื่น "กำลังเล่น" (แต่ไม่ busy)
+    if (currentAudio) {
+        console.log('Stopping previous audio...');
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+    }
+
+    // 4. ถ้ามาถึงตรงนี้ คือการ "เริ่มเล่นเสียงใหม่"
+    console.log('Starting new audio...');
+    isLoadingAudio.current = true; // <-- ตั้ง LOCK
+    setPlayingCallId(callId);     // อัปเดต UI
     setAudioError(null);
+
     try {
-      const audioData = await callsService.getCallAudio(callId);
-      const audioSrc = `data:${audioData.mimeType};base64,${audioData.data}`;
-      currentAudio = new Audio(audioSrc);
-      currentAudio.onended = () => {
-        setPlayingCallId(null);
-        currentAudio = null;
-      };
-      currentAudio.onerror = () => {
-        setAudioError(`Failed to play audio for ${callId}.`);
-        setPlayingCallId(null);
-        currentAudio = null;
-      };
-      await currentAudio.play();
+        const audioData = await callsService.getCallAudio(callId);
+
+        if (isLoadingAudio.current === false) {
+             console.warn('Audio request was cancelled during fetch.');
+             return;
+        }
+
+        const audioSrc = `data:${audioData.mimeType};base64,${audioData.data}`;
+        currentAudio = new Audio(audioSrc);
+
+        currentAudio.onended = () => {
+            console.log('Audio finished playing.');
+            if (playingCallId === callId) {
+               setPlayingCallId(null);
+            }
+            currentAudio = null;
+            isLoadingAudio.current = false; // <-- ปลด LOCK
+        };
+
+        currentAudio.onerror = (e) => {
+            console.error('Audio playback error', e);
+            if (playingCallId === callId) {
+               setAudioError(`Failed to play audio for ${callId}.`);
+               setPlayingCallId(null);
+            }
+            currentAudio = null;
+            isLoadingAudio.current = false; // <-- ปลด LOCK
+        };
+
+        await currentAudio.play();
+        
     } catch (err) {
-      setAudioError('Failed to fetch or play audio.');
-      setPlayingCallId(null);
+        console.error('Failed to fetch audio:', err);
+        setAudioError('Failed to fetch or play audio.');
+        setPlayingCallId(null);
+        currentAudio = null;
+        isLoadingAudio.current = false; // <-- ปลด LOCK
     }
   };
+  // --- จบการแก้ไข ---
 
-  // (Case 11) Handlers for CallItem
+
+  // (Handlers ที่เหลือ - ไม่เปลี่ยนแปลง)
   const handleCallback = (callNumber: string) => window.location.href = `tel:${callNumber}`;
-  const handleAddToWhitelist = (callNumber: string) => console.log(`Whitelist: ${callNumber}`); // TODO: Implement
-  const handleAddToBlacklist = (callNumber: string) => console.log(`Blacklist: ${callNumber}`); // TODO: Implement
-
-  // --- Quick Actions Handlers (Case 12) ---
-
-  // --- MODIFIED: ชี้ไปที่ Tab #ai_secretary ---
+  const handleAddToWhitelist = (callNumber: string) => console.log(`Whitelist: ${callNumber}`);
+  const handleAddToBlacklist = (callNumber: string) => console.log(`Blacklist: ${callNumber}`); 
   const handleSetAnnouncement = () => {
     navigate('/settings#ai_secretary');
   };
-  // --- END MODIFICATION ---
-
   const handleToggleDND = async () => {
     setIsUpdatingQuickAction(true);
     try {
@@ -183,12 +220,9 @@ export const DashboardPage: React.FC = () => {
       setIsUpdatingQuickAction(false);
     }
   };
-
   const handleCallForwarding = () => {
     navigate('/settings'); 
   };
-
-  // (Case 12) Check settings for announcement
   const activeAnnouncement = userSettings?.announcement || null;
 
   return (
@@ -197,7 +231,7 @@ export const DashboardPage: React.FC = () => {
         Welcome back, {user?.owner_name || 'User'}!
       </h1>
 
-      {/* (Case 12) Status Cards */}
+      {/* (Status Cards - ไม่เปลี่ยนแปลง) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <StatusCard 
           title="Availability"
@@ -206,8 +240,6 @@ export const DashboardPage: React.FC = () => {
           icon={<UserCheckIcon />}
           status={userState.status === 'available' ? 'active' : (userState.status === 'dnd' ? 'dnd' : 'inactive')}
         />
-        
-        {/* --- MODIFIED: ใช้ค่าที่คำนวณได้ และแก้ Link --- */}
         <StatusCard 
           title="Missed Calls (Today)" 
           value={missedCallsToday.toString()}
@@ -216,7 +248,6 @@ export const DashboardPage: React.FC = () => {
           status={missedCallsToday > 0 ? "warning" : "inactive"} 
           linkTo="/calls?filter=missed" 
         />
-        {/* --- MODIFIED: ใช้ค่าที่คำนวณได้ และแก้ Link --- */}
         <StatusCard 
           title="Spam Blocked (Week)" 
           value={spamBlockedThisWeek.toString()}
@@ -227,7 +258,7 @@ export const DashboardPage: React.FC = () => {
         />
       </div>
 
-      {/* Quick Actions Bar */}
+      {/* (Quick Actions Bar - ไม่เปลี่ยนแปลง) */}
       <div className="bg-white rounded-lg shadow-sm border px-4 py-3 flex justify-around mb-6">
          <button 
            className="flex flex-col items-center p-2 text-center" 
@@ -261,7 +292,7 @@ export const DashboardPage: React.FC = () => {
         </button>
       </div>
       
-      {/* Audio Error Display (Case 11) */}
+      {/* (Audio Error Display - ไม่เปลี่ยนแปลง) */}
       {audioError && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative my-4" role="alert">
           <AlertTriangleIcon className="inline w-5 h-5 mr-2" />
@@ -270,7 +301,7 @@ export const DashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* MODIFIED (Case 11): Recent Activity List */}
+      {/* (Recent Activity List - ไม่เปลี่ยนแปลง) */}
       <div className="mt-8">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold">Recent Activity</h2>
@@ -283,7 +314,6 @@ export const DashboardPage: React.FC = () => {
           <div className="text-destructive p-4 bg-red-50 rounded-md">{callsError}</div>
         )}
 
-        {/* Use the CallsList component and pass audio handlers */}
         <CallsList
           calls={displayedCalls}
           isLoading={isLoadingCalls}

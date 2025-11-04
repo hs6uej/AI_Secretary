@@ -1,16 +1,14 @@
-// src/pages/CallsPage.tsx (MODIFIED)
-import React, { useEffect, useState, useCallback } from 'react';
+// src/pages/CallsPage.tsx (FIXED: Corrected Race Condition Logic)
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { callsService } from '../services/callsService';
 import { CallsList } from '../components/dashboard/CallsList';
-import { CallDisplay, CallLog, CallType } from '../types/call'; 
-import { SearchIcon, AlertTriangleIcon } from 'lucide-react'; 
+import { CallDisplay, CallLog, CallType } from '../types/call';
+import { SearchIcon, AlertTriangleIcon } from 'lucide-react';
 import { Input } from '../components/ui/Input';
-
-// --- ADDED: Import hook สำหรับอ่าน URL Params ---
 import { useSearchParams } from 'react-router-dom';
 
-// MODIFIED (Case 5, 7, 8, 9): อัปเดต Helper function
+// (Helper function mapCallLogToDisplay - ไม่เปลี่ยนแปลง)
 const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
     let displayStatus: CallDisplay['status'] = 'other';
     if (call.processing_status === 'failed') {
@@ -26,18 +24,16 @@ const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
        displayStatus = 'blocked';
      }
    }
-
-   const hasValidRecordingUrl = !!call.voice_log; 
-
+   const hasValidRecordingUrl = !!call.voice_log;
    return {
-     id: call.call_id, 
+     id: call.call_id,
      callerName: call.caller_name || 'Unknown Caller',
      callerNumber: call.caller_phone,
      timestamp: call.created_at,
      type: call.call_type,
      summary: call.summary || null,
      status: displayStatus,
-     recordingUrl: hasValidRecordingUrl ? call.voice_log : null, 
+     recordingUrl: hasValidRecordingUrl ? call.voice_log : null,
      contact_status: call.contact_status,
      confidence: call.confidence,
      spam_risk_score: call.spam_risk_score,
@@ -45,10 +41,8 @@ const mapCallLogToDisplay = (call: CallLog): CallDisplay => {
    };
 };
 
-// ADDED (Case 7): Audio player instance
 let currentAudio: HTMLAudioElement | null = null;
 
-// --- ADDED: ประเภทของ Status Filter ---
 type StatusFilterType = 'all' | 'missed' | 'blocked' | 'answered' | 'processing' | 'other' | 'failed';
 
 export const CallsPage: React.FC = () => {
@@ -59,19 +53,18 @@ export const CallsPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [timeFilter, setTimeFilter] = useState('week');
 
-  // --- ADDED: Hook และ State สำหรับ Status Filter ---
   const [searchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState<StatusFilterType>('all');
 
-  // ADDED (Case 7): State for audio playback
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
 
-  // MODIFIED (Fix Infinite Loop):
+  const isLoadingAudio = useRef(false);
+
   const fetchCalls = useCallback(async (filter: string, reset = false) => {
     setIsLoading(true);
     setError(null);
-    setAudioError(null); 
+    setAudioError(null);
 
     if (currentAudio) {
       currentAudio.pause();
@@ -79,6 +72,8 @@ export const CallsPage: React.FC = () => {
       setPlayingCallId(null);
     }
     
+    isLoadingAudio.current = false;
+
     try {
       const response = await callsService.getAllCalls(filter, { limit: 50 });
       setCalls(response.items || []);
@@ -88,80 +83,130 @@ export const CallsPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []); 
+  }, []);
 
-  // useEffect สำหรับดึงข้อมูล (เหมือนเดิม)
   useEffect(() => {
-    if (user) { 
+    if (user) {
       fetchCalls(timeFilter, true);
     }
   }, [user, timeFilter, fetchCalls]);
-  
-  // --- ADDED: useEffect ใหม่ สำหรับอ่าน Filter จาก URL ---
+
   useEffect(() => {
     const filterFromUrl = searchParams.get('filter');
     if (filterFromUrl === 'missed') {
       setStatusFilter('missed');
     } else if (filterFromUrl === 'spam') {
-      setStatusFilter('blocked'); // 'blocked' คือ status ที่เรา map ไว้สำหรับ spam
+      setStatusFilter('blocked');
     }
   }, [searchParams]);
-  // --- END ADDED ---
 
-  
-  // --- MODIFIED: แก้ไข Logic การกรอง (Frontend) ---
+
   const filteredCalls = calls
     .map(mapCallLogToDisplay)
     .filter(call => {
-      // 1. ตรวจสอบ Status Filter
       const statusMatch = (statusFilter === 'all') || (call.status === statusFilter);
-
-      // 2. ตรวจสอบ Search Term
       const searchMatch =
         call.callerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         call.callerNumber.includes(searchTerm) ||
         (call.summary && call.summary.toLowerCase().includes(searchTerm.toLowerCase()));
-      
-      return statusMatch && searchMatch; // ต้องตรงทั้ง 2 เงื่อนไข
+      return statusMatch && searchMatch;
     });
-  // --- END MODIFIED ---
 
 
-  // --- Handlers (เหมือนเดิม) ---
+  // --- (MODIFIED) นี่คือ Logic ที่ถูกต้อง ---
   const handleListenRecording = async (callId: string) => {
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.src = ''; 
-      currentAudio = null;
-    }
+
+    // 1. ตรวจสอบก่อนว่า "กำลังกดปุ่มหยุด" หรือไม่
+    // (เช็ค state playingCallId)
     if (playingCallId === callId) {
+      console.log('Stopping audio (already playing)...');
+      
+      // ไม่ว่าเสียงจะกำลังโหลด (busy) หรือกำลังเล่น
+      // เราจะหยุดมัน และปลด lock
+      if (currentAudio) {
+          currentAudio.pause();
+          currentAudio.src = '';
+          currentAudio = null;
+      }
       setPlayingCallId(null);
       setAudioError(null);
+      isLoadingAudio.current = false; // บังคับปลด lock
       return;
     }
-    setPlayingCallId(callId);
+    
+    // 2. ถ้ากดปุ่มใหม่ ในขณะที่ "กำลังโหลด" (busy) เสียงอื่นอยู่
+    // (เช็ค ref isLoadingAudio)
+    if (isLoadingAudio.current) {
+        console.warn('Audio is busy, please wait.');
+        return;
+    }
+
+    // 3. ถ้ากดปุ่มใหม่ ในขณะที่เสียงอื่น "กำลังเล่น" (แต่ไม่ busy)
+    // ให้หยุดเสียงเก่าก่อน
+    if (currentAudio) {
+        console.log('Stopping previous audio...');
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+        // ไม่ต้องตั้ง lock เพราะเราไม่ได้ await
+    }
+
+    // 4. ถ้ามาถึงตรงนี้ คือการ "เริ่มเล่นเสียงใหม่"
+    console.log('Starting new audio...');
+    isLoadingAudio.current = true; // <-- ตั้ง LOCK
+    setPlayingCallId(callId);     // อัปเดต UI
     setAudioError(null);
+
     try {
-      const audioData = await callsService.getCallAudio(callId);
-      const audioSrc = `data:${audioData.mimeType};base64,${audioData.data}`;
-      currentAudio = new Audio(audioSrc);
-      currentAudio.onended = () => {
-        setPlayingCallId(null);
-        currentAudio = null;
-      };
-      currentAudio.onerror = () => {
-        console.error('Audio playback error');
-        setAudioError(`Failed to play audio for ${callId}.`);
-        setPlayingCallId(null);
-        currentAudio = null;
-      };
-      await currentAudio.play();
+        const audioData = await callsService.getCallAudio(callId);
+
+        // 5. (Safety check) ตรวจสอบว่าผู้ใช้กดยกเลิก (ปุ่มหยุด)
+        // ในระหว่างที่เรากำลัง fetch ข้อมูลหรือไม่
+        if (isLoadingAudio.current === false) {
+             console.warn('Audio request was cancelled during fetch.');
+             return;
+        }
+
+        const audioSrc = `data:${audioData.mimeType};base64,${audioData.data}`;
+        currentAudio = new Audio(audioSrc);
+
+        currentAudio.onended = () => {
+            console.log('Audio finished playing.');
+            // เช็คว่า ID ที่เล่นจบ คือ ID ที่ state ถืออยู่หรือไม่
+            // (ป้องกันกรณีผู้ใช้กดปุ่มอื่นรัวๆ)
+            if (playingCallId === callId) {
+               setPlayingCallId(null);
+            }
+            currentAudio = null;
+            isLoadingAudio.current = false; // <-- ปลด LOCK
+        };
+
+        currentAudio.onerror = (e) => {
+            console.error('Audio playback error', e);
+            if (playingCallId === callId) {
+               setAudioError(`Failed to play audio for ${callId}.`);
+               setPlayingCallId(null);
+            }
+            currentAudio = null;
+            isLoadingAudio.current = false; // <-- ปลด LOCK
+        };
+
+        // เริ่มเล่น
+        await currentAudio.play();
+        
+        // 6. [สำคัญ] เราจะไม่ปลด lock ตรงนี้
+        // Lock จะถูกปลดโดย onended หรือ onerror เท่านั้น
+
     } catch (err) {
-      console.error('Failed to play audio:', err);
-      setAudioError('Failed to fetch or play audio.');
-      setPlayingCallId(null);
+        console.error('Failed to fetch audio:', err);
+        setAudioError('Failed to fetch or play audio.');
+        setPlayingCallId(null);
+        currentAudio = null;
+        isLoadingAudio.current = false; // <-- ปลด LOCK (กรณี fetch พลาด)
     }
   };
+  // --- จบการแก้ไข ---
+
 
   const handleCallback = (callNumber: string) => {
     console.log(`Calling back ${callNumber}...`);
@@ -188,7 +233,7 @@ export const CallsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Filter Bar */}
+      {/* Filter Bar (ไม่เปลี่ยนแปลง) */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <Input
           placeholder="Search name, number, summary..."
@@ -199,10 +244,8 @@ export const CallsPage: React.FC = () => {
           fullWidth
         />
         
-        {/* --- MODIFIED: หุ้ม Dropdowns ด้วย flex --- */}
         <div className="flex items-center gap-4">
           
-          {/* --- ADDED: Status Filter Dropdown --- */}
           <div className="flex items-center">
             <label className="mr-2 text-sm font-medium">Status:</label>
             <select
@@ -220,7 +263,6 @@ export const CallsPage: React.FC = () => {
             </select>
           </div>
 
-          {/* Time Filter (เดิม) */}
           <div className="flex items-center">
             <label className="mr-2 text-sm font-medium">Time:</label>
             <select
@@ -236,11 +278,12 @@ export const CallsPage: React.FC = () => {
             </select>
           </div>
         </div>
-        {/* --- END MODIFIED --- */}
 
       </div>
+      
+      {/* CallsList (ไม่เปลี่ยนแปลง) */}
       <CallsList
-        calls={filteredCalls} // Display filtered calls
+        calls={filteredCalls}
         isLoading={isLoading}
         onListenRecording={handleListenRecording} 
         playingCallId={playingCallId} 
