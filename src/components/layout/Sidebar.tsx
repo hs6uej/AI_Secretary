@@ -2,7 +2,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import logoais from './logoais.png';
+import logoais from './logog.png';
 import {
   LayoutDashboardIcon,
   PhoneIcon as CallLogsIcon,

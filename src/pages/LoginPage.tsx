@@ -4,7 +4,7 @@ import { PhoneIcon, KeyIcon, AlertCircleIcon, TerminalIcon, UserPlusIcon, LogInI
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
-import logoais from '../components/layout/logoais.png';
+import logoais from '../components/layout/logog.png';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
