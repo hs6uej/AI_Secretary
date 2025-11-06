@@ -1,7 +1,7 @@
-# AIS AI Secretary - Frontend
+#  AI Secretary - Frontend
 
 <div align="center">
-  <img src="./src/components/layout/logoais.png" alt="AIS AI Secretary Logo" width="200"/>
+  <img src="./src/components/layout/logog.png" alt="AI Secretary Logo" width="200"/>
 </div>
 
 <p align="center">

@@ -22,7 +22,7 @@ export const MobileNavbar: React.FC<MobileNavbarProps> = ({
         <button onClick={toggleMenu} className="p-2 mr-3 rounded-full hover:bg-gray-100">
           <MenuIcon size={24} />
         </button>
-        {/* <img src="https://placehold.co/120x40?text=AIS" alt="AIS Logo" className="h-8" /> */}
+        
       </div>
       
       {/* --- MODIFIED: เหลือแค่ปุ่ม Logout --- */}

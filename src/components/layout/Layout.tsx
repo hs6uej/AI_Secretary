@@ -42,7 +42,7 @@ export const Layout: React.FC = () => {
         {isMobileMenuOpen && <div className="fixed inset-0 z-40 bg-black bg-opacity-50" onClick={toggleMenu}>
             <div className="absolute top-0 left-0 w-3/4 h-full bg-white shadow-lg" onClick={e => e.stopPropagation()}>
               <div className="p-4 border-b">
-                <h3 className="text-lg font-medium">AIS AI Secretary</h3>
+                <h3 className="text-lg font-medium"> AI Secretary</h3>
               </div>
               {/* --- MODIFIED: ส่ง props ที่จำเป็นให้ Sidebar (ใน Mobile) --- */}
               <Sidebar 
